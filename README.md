@@ -6,14 +6,17 @@ another's data.
 
 ## Run it
 
-Needs JDK 21+, Maven and Docker.
+Needs JDK 21+ and Docker. Maven does not need to be installed: the `mvnw` wrapper downloads it on first use.
 
 ```bash
-docker compose up -d --wait                             # PostgreSQL on localhost:5433
-mvn spring-boot:run -Dspring-boot.run.profiles=demo     # API on localhost:8080, with demo data
-bash demo.sh                                            # live walkthrough (second terminal; Git Bash on Windows)
-mvn test                                                # integration tests, own throwaway PostgreSQL via Testcontainers
+docker compose up -d --wait                                # PostgreSQL on localhost:5433
+./mvnw spring-boot:run -Dspring-boot.run.profiles=demo     # API on localhost:8080, with demo data
+bash demo.sh                                               # live walkthrough (second terminal; Git Bash on Windows)
+./mvnw verify                                              # build + integration tests, own throwaway PostgreSQL via Testcontainers
 ```
+
+In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profile argument:
+`.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"`.
 
 `demo.sh` sends about 35 requests as different users and prints, for each, the expected and the actual HTTP status:
 both organizations listing their own data, blocked cross-tenant reads, updates and deletes, and each role rule.
