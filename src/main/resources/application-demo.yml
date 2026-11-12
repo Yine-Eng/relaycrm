@@ -1,0 +1,4 @@
+# "demo" profile: also load the seed data (two organizations, six users, a few records).
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/demo

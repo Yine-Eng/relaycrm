@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: relaycrm
+  datasource:
+    # The application connects as a restricted role: no superuser, no BYPASSRLS,
+    # so PostgreSQL row-level security applies to every query it runs.
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/relaycrm}
+    username: ${DB_APP_USER:relaycrm_app}
+    password: ${DB_APP_PASSWORD:app_secret}
+  flyway:
+    # Migrations run as the schema owner, a different (privileged) role.
+    user: ${DB_OWNER_USER:relaycrm_owner}
+    password: ${DB_OWNER_PASSWORD:owner_secret}
+    placeholders:
+      appUser: ${spring.datasource.username}
+      appPassword: ${spring.datasource.password}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  mvc:
+    problemdetails:
+      enabled: true
