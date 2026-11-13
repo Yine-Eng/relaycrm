@@ -18,6 +18,8 @@ bash demo.sh                                               # live walkthrough (s
 In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profile argument:
 `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"`.
 
+Every pull request, and every merge to `main`, runs `./mvnw verify` in GitHub Actions (`.github/workflows/ci.yml`).
+
 `demo.sh` sends about 55 requests as different users and prints, for each, the expected and the actual HTTP status:
 both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, and the
 PUT / PATCH update rules.
@@ -77,6 +79,10 @@ curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
 - **PATCH is validated like PUT.** The patch is laid over the record's current values and the result must pass the
   same checks, then it is saved through the same code path, with the same permission rules. Changing `ownerId` by
   PATCH is therefore still for managers and admins only.
+- **The owner is never cleared.** Every record has an owner. On PATCH, leaving `ownerId` out keeps the owner and
+  `"ownerId": null` is a 400. On PUT, leaving `ownerId` out (or sending `null`) also keeps the current owner: this is
+  the one exception to "PUT replaces everything", so that a client, and in particular a rep, does not have to
+  repeat the owner on every update.
 - **Unknown fields are rejected** with 400 on POST, PUT and PATCH: a typo such as `stauts`, or an attempt to send
   `orgId` or `id`. Silently ignoring them would let a client believe a change was made when it was not.
 - **Every 400 names the fields**, for example
@@ -95,6 +101,15 @@ Details that the brief left open, and what I chose:
 - **An opportunity's `contactId`** must be a contact of the same organization.
 - Lists are paged (`?page=0&size=50`).
 - Errors use the standard `application/problem+json` format.
+
+### Design decision: controllers take raw JSON
+
+The POST, PUT and PATCH endpoints receive the body as raw JSON and pass it to `RequestReader`, instead of using
+Spring's usual typed `@RequestBody` with `@Valid`. This gives strict unknown-field rejection for the three request
+types only (not for JSON handling globally), and one path for all three verbs in which access is checked before the
+body is read, for PUT and PATCH alike. Typed `@RequestBody` for POST and PUT was considered and rejected: PATCH
+needs the raw body anyway, so it would have added a second error-handling path that must produce identical
+responses, and PUT would have validated the body before checking access.
 
 ## How isolation is enforced
 

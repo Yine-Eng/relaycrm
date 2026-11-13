@@ -1,6 +1,7 @@
 package com.relaycrm.common;
 
 import java.util.List;
+import java.util.Map;
 
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.CurrentUserContext;
@@ -82,6 +83,10 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     public E patch(Long id, JsonNode patch) {
         CurrentUser user = CurrentUserContext.require();
         E entity = loadForEdit(id, user);
+        // A record always has an owner: leave ownerId out to keep it, but it cannot be cleared.
+        if (patch != null && patch.has("ownerId") && patch.get("ownerId").isNull()) {
+            throw ApiErrors.invalidFields(Map.of("ownerId", "must not be null"));
+        }
         R merged = requests.merge(toRequest(entity), patch, requestType);
         return applyAndSave(user, entity, merged);
     }

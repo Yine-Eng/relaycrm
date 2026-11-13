@@ -198,10 +198,34 @@ class UpdateSemanticsTest extends IntegrationTestBase {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ownerId", is(4)))
                 .andExpect(jsonPath("$.company", is("Fresh Co")));
-        // A null ownerId means "no change of owner", as on PUT.
-        doPatch(ACME_MANAGER, "/api/contacts/" + id, "{\"ownerId\":null}")
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "/api/contacts      | {\"firstName\":\"A\",\"lastName\":\"B\"}",
+            "/api/leads         | {\"name\":\"A\"}",
+            "/api/opportunities | {\"name\":\"A\"}"
+    })
+    void patchCannotClearTheOwner(String path, String body) throws Exception {
+        long id = create(ACME_REP_RITA, path, body);
+        // Even an admin cannot set the owner to null: every record has an owner.
+        doPatch(ACME_ADMIN, path + "/" + id, "{\"ownerId\":null}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.ownerId", is("must not be null")));
+        // Leaving ownerId out keeps the owner (an empty patch changes nothing).
+        doPatch(ACME_ADMIN, path + "/" + id, "{}")
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ownerId", is(4)));
+                .andExpect(jsonPath("$.ownerId", is(3)));
+    }
+
+    @Test
+    void putWithoutOwnerKeepsTheCurrentOwner() throws Exception {
+        // The one exception to "PUT replaces everything": the owner is never cleared.
+        long id = create(ACME_REP_RITA, "/api/contacts", FULL_CONTACT);
+        doPut(ACME_ADMIN, "/api/contacts/" + id, "{\"firstName\":\"Nina\",\"lastName\":\"New\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ownerId", is(3)))
+                .andExpect(jsonPath("$.company", nullValue()));
     }
 
     // --- Unknown fields are rejected on POST, PUT and PATCH, for every record type ---

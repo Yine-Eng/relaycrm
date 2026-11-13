@@ -105,6 +105,8 @@ call "Acme rep Ravi" "$ACME_RAVI"    403 PATCH /api/contacts/$ID '{"company":"Ra
 call "Globex admin"  "$GLOBEX_ADMIN" 404 PATCH /api/contacts/$ID '{"company":"Hijacked"}'
 call "Acme rep Rita" "$ACME_RITA"    403 PATCH /api/contacts/$ID '{"ownerId":4}'
 call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/contacts/$ID '{"ownerId":4}'
+echo "    A record always has an owner: it cannot be set to null"
+call "Acme admin"    "$ACME_ADMIN"   400 PATCH /api/contacts/$ID '{"ownerId":null}'
 call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/contacts/$ID
 
 section "9. A lead's status is optional on create but cannot be dropped by an update"
