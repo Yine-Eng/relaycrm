@@ -79,11 +79,26 @@ class TenantIsolationTest extends IntegrationTestBase {
 
     @Test
     void newRecordAlwaysLandsInTheCallersOrganization() throws Exception {
-        // An orgId in the body is ignored: the organization comes from the authenticated user.
-        doPost(GLOBEX_REP, "/api/contacts", "{\"firstName\":\"A\",\"lastName\":\"B\",\"orgId\":1}")
+        // The organization comes from the authenticated user...
+        doPost(GLOBEX_REP, "/api/contacts", "{\"firstName\":\"A\",\"lastName\":\"B\"}")
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.orgId", is(2)))
                 .andExpect(jsonPath("$.ownerId", is(6)));
+        // ...and a body that tries to name one is rejected outright.
+        doPost(GLOBEX_REP, "/api/contacts", "{\"firstName\":\"A\",\"lastName\":\"B\",\"orgId\":1}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.orgId", is("unknown field")));
+    }
+
+    @Test
+    void anotherOrganizationsRecordCannotBePatched() throws Exception {
+        doPatch(GLOBEX_ADMIN, "/api/contacts/1", "{\"lastName\":\"Hijacked\"}").andExpect(status().isNotFound());
+        doPatch(GLOBEX_ADMIN, "/api/leads/1", "{\"name\":\"Hijacked\"}").andExpect(status().isNotFound());
+        doPatch(GLOBEX_ADMIN, "/api/opportunities/1", "{\"name\":\"Hijacked\"}").andExpect(status().isNotFound());
+
+        doGet(ACME_ADMIN, "/api/contacts/1").andExpect(jsonPath("$.lastName", not("Hijacked")));
+        doGet(ACME_ADMIN, "/api/leads/1").andExpect(jsonPath("$.name", not("Hijacked")));
+        doGet(ACME_ADMIN, "/api/opportunities/1").andExpect(jsonPath("$.name", not("Hijacked")));
     }
 
     @Test

@@ -20,8 +20,10 @@ BODY=""
 call() {
   local who="$1" key="$2" expected="$3" method="$4" path="$5" data="${6:-}"
   local args=(-s -w $'\n%{http_code}' -X "$method" "$BASE$path")
+  local type="application/json"
+  [ "$method" = "PATCH" ] && type="application/merge-patch+json"
   [ -n "$key" ] && args+=(-H "X-Api-Key: $key")
-  [ -n "$data" ] && args+=(-H "Content-Type: application/json" -d "$data")
+  [ -n "$data" ] && args+=(-H "Content-Type: $type" -d "$data")
   local out; out=$(curl "${args[@]}")
   local status="${out##*$'\n'}"
   BODY="${out%$'\n'*}"
@@ -76,7 +78,7 @@ section "7. Leads and opportunities follow the same rules"
 call "Acme rep Rita" "$ACME_RITA"    201 POST /api/leads '{"name":"Lena Lead","company":"Prospect Co","source":"webinar"}'
 LEAD=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
 call "Acme rep Ravi" "$ACME_RAVI"    403 PUT    /api/leads/$LEAD '{"name":"Lena Lead","status":"QUALIFIED"}'
-call "Acme rep Rita" "$ACME_RITA"    200 PUT    /api/leads/$LEAD '{"name":"Lena Lead","status":"QUALIFIED"}'
+call "Acme rep Rita" "$ACME_RITA"    200 PUT    /api/leads/$LEAD '{"name":"Lena Lead","company":"Prospect Co","source":"webinar","status":"QUALIFIED"}'
 call "Globex admin"  "$GLOBEX_ADMIN" 404 GET    /api/leads/$LEAD
 call "Acme rep Rita" "$ACME_RITA"    201 POST /api/opportunities '{"name":"Road Runner - upsell","contactId":1,"amount":3000,"stage":"PROPOSAL"}'
 OPP=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
@@ -84,6 +86,40 @@ call "Globex admin"  "$GLOBEX_ADMIN" 404 DELETE /api/opportunities/$OPP
 call "Acme manager"  "$ACME_MANAGER" 403 DELETE /api/opportunities/$OPP
 call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/opportunities/$OPP
 call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/leads/$LEAD
+
+section "8. PUT replaces the whole record; PATCH changes only what is sent"
+call "Acme rep Rita" "$ACME_RITA" 201 POST /api/contacts '{"firstName":"Pat","lastName":"Patch","email":"pat@fresh.test","phone":"555-0100","company":"Fresh Co"}'
+ID=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+echo "    PATCH one field: everything else stays"
+call "Acme rep Rita" "$ACME_RITA" 200 PATCH /api/contacts/$ID '{"company":"Renamed Co"}'
+echo "    PATCH null: clears an optional field"
+call "Acme rep Rita" "$ACME_RITA" 200 PATCH /api/contacts/$ID '{"phone":null}'
+echo "    PATCH null on a required field: refused"
+call "Acme rep Rita" "$ACME_RITA" 400 PATCH /api/contacts/$ID '{"lastName":null}'
+echo "    PUT without a required field: refused, and the field is named"
+call "Acme rep Rita" "$ACME_RITA" 400 PUT   /api/contacts/$ID '{"firstName":"Pat"}'
+echo "    PUT with only the required fields: optional fields are cleared"
+call "Acme rep Rita" "$ACME_RITA" 200 PUT   /api/contacts/$ID '{"firstName":"Pat","lastName":"Replaced"}'
+echo "    PATCH follows the same permission rules as PUT"
+call "Acme rep Ravi" "$ACME_RAVI"    403 PATCH /api/contacts/$ID '{"company":"Ravis"}'
+call "Globex admin"  "$GLOBEX_ADMIN" 404 PATCH /api/contacts/$ID '{"company":"Hijacked"}'
+call "Acme rep Rita" "$ACME_RITA"    403 PATCH /api/contacts/$ID '{"ownerId":4}'
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/contacts/$ID '{"ownerId":4}'
+call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/contacts/$ID
+
+section "9. A lead's status is optional on create but cannot be dropped by an update"
+call "Acme rep Rita" "$ACME_RITA" 201 POST /api/leads '{"name":"Sam Status"}'
+LEAD=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+call "Acme rep Rita" "$ACME_RITA" 200 PATCH /api/leads/$LEAD '{"status":"QUALIFIED"}'
+call "Acme rep Rita" "$ACME_RITA" 400 PUT   /api/leads/$LEAD '{"name":"Sam Status"}'
+call "Acme rep Rita" "$ACME_RITA" 400 PATCH /api/leads/$LEAD '{"status":null}'
+call "Acme admin"    "$ACME_ADMIN" 204 DELETE /api/leads/$LEAD
+
+section "10. BLOCKED: fields the API does not know (a tenant override attempt, and a typo)"
+call "Globex rep"    "$GLOBEX_REP"  400 POST  /api/contacts '{"firstName":"A","lastName":"B","orgId":1}'
+call "Globex admin"  "$GLOBEX_ADMIN" 400 PATCH /api/contacts/3 '{"orgId":1}'
+call "Acme rep Rita" "$ACME_RITA"   400 POST  /api/leads '{"name":"Typo","stauts":"QUALIFIED"}'
+call "Acme rep Rita" "$ACME_RITA"   400 PUT   /api/leads/1 '{"name":"Wile E.","status":"NEW","stauts":"QUALIFIED"}'
 
 echo
 if [ "$FAILED" = 0 ]; then echo "All steps behaved as expected."; else echo "SOME STEPS DID NOT BEHAVE AS EXPECTED."; exit 1; fi

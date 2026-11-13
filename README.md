@@ -18,8 +18,9 @@ bash demo.sh                                               # live walkthrough (s
 In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profile argument:
 `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"`.
 
-`demo.sh` sends about 35 requests as different users and prints, for each, the expected and the actual HTTP status:
-both organizations listing their own data, blocked cross-tenant reads, updates and deletes, and each role rule.
+`demo.sh` sends about 55 requests as different users and prints, for each, the expected and the actual HTTP status:
+both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, and the
+PUT / PATCH update rules.
 
 ### Demo users
 
@@ -37,7 +38,7 @@ Send the key in the `X-Api-Key` header, for example
 
 ## API
 
-The same five operations exist for `/api/contacts`, `/api/leads` and `/api/opportunities`. `GET /api/me` shows who
+The same six operations exist for `/api/contacts`, `/api/leads` and `/api/opportunities`. `GET /api/me` shows who
 the caller is.
 
 | Operation          | REP                | MANAGER | ADMIN | Record in another organization |
@@ -46,7 +47,42 @@ the caller is.
 | `GET /{id}`        | yes                | yes     | yes   | 404                            |
 | `POST /`           | yes (owner = self) | yes     | yes   | not possible                   |
 | `PUT /{id}`        | only if owner      | yes     | yes   | 404                            |
+| `PATCH /{id}`      | only if owner      | yes     | yes   | 404                            |
 | `DELETE /{id}`     | 403                | 403     | yes   | 404 (403 for non-admins)       |
+
+### Updating a record: PUT or PATCH
+
+| | `PUT /{id}` | `PATCH /{id}` |
+|---|---|---|
+| Meaning | Replace the whole record | Change only the fields sent |
+| `Content-Type` | `application/json` | `application/merge-patch+json` (JSON Merge Patch, RFC 7396); anything else is 415 |
+| Field left out | Optional field: cleared. Required field: 400 | Unchanged |
+| Field sent as `null` | Optional field: cleared. Required field: 400 | Optional field: cleared. Required field: 400 |
+
+Example, for a contact that has a phone number and a company:
+
+```bash
+# Change the company; the name, email and phone stay as they are.
+curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
+     -H "Content-Type: application/merge-patch+json" -d '{"company": "Road Runner Group"}'
+
+# Clear the phone number.
+curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
+     -H "Content-Type: application/merge-patch+json" -d '{"phone": null}'
+```
+
+- **Required fields.** Contact: `firstName`, `lastName`. Lead: `name`. Opportunity: `name`. A lead's `status` and
+  an opportunity's `stage` may be left out on create (they default to `NEW` and `PROSPECTING`) but are required on
+  update, so an update can never silently reset a won deal to a prospect.
+- **PATCH is validated like PUT.** The patch is laid over the record's current values and the result must pass the
+  same checks, then it is saved through the same code path, with the same permission rules. Changing `ownerId` by
+  PATCH is therefore still for managers and admins only.
+- **Unknown fields are rejected** with 400 on POST, PUT and PATCH: a typo such as `stauts`, or an attempt to send
+  `orgId` or `id`. Silently ignoring them would let a client believe a change was made when it was not.
+- **Every 400 names the fields**, for example
+  `{"status": 400, "detail": "Invalid fields: lastName", "errors": {"lastName": "must not be blank"}}`.
+- **Access is checked before the body.** A request for a record the caller may not edit gets 404 or 403 whatever the
+  body contains.
 
 Details that the brief left open, and what I chose:
 
@@ -57,7 +93,7 @@ Details that the brief left open, and what I chose:
 - **Reassigning ownership** (the optional `ownerId` field) is for managers and admins only, and the new owner must be
   in the same organization. Otherwise a rep could hand a record to a colleague, or take over someone else's.
 - **An opportunity's `contactId`** must be a contact of the same organization.
-- `PUT` replaces the whole record: fields left out become null. Lists are paged (`?page=0&size=50`).
+- Lists are paged (`?page=0&size=50`).
 - Errors use the standard `application/problem+json` format.
 
 ## How isolation is enforced
@@ -67,7 +103,7 @@ request.
 
 1. **Identity comes from the server.** `ApiKeyAuthFilter` looks the caller up by API key and takes the organization
    and role from the `users` table. No request field, header or path segment carries an organization id, so there is
-   nothing to tamper with. Request bodies have no `orgId` field; one sent anyway is ignored.
+   nothing to tamper with. Request bodies have no `orgId` field; one sent anyway is rejected with 400.
 
 2. **Every query is scoped in the application.** The services can only reach records through
    `findByIdAndOrgId` / `findByOrgId` (`OwnedRecordRepository`). All three record types share one service base class,
@@ -93,7 +129,8 @@ The role rules live in one small class, `AccessPolicy`, and are applied after th
 src/main/java/com/relaycrm
   auth/         ApiKeyAuthFilter (stub login), CurrentUser, CurrentUserContext, User, Role
   tenancy/      TenantAwareTransactionManager (sets app.current_org), startup check on the database role
-  common/       OwnedRecord (base entity), OwnedRecordService (the access rules), AccessPolicy, ApiErrors
+  common/       OwnedRecord (base entity), OwnedRecordService (the access rules), AccessPolicy, ApiErrors,
+                RequestReader (reads and validates POST / PUT / PATCH bodies)
   contact/      entity, request, repository, service, controller
   lead/         same
   opportunity/  same, plus the same-organization contact check
@@ -103,6 +140,7 @@ src/main/resources/db
 src/test/java/com/relaycrm
   TenantIsolationTest         cross-tenant requests over HTTP, plus row-level security tested with raw SQL
   RolePermissionTest          role rules inside one organization
+  UpdateSemanticsTest         PUT replacement, PATCH merging, required and unknown fields
 demo.sh                       live walkthrough
 ```
 
@@ -122,6 +160,11 @@ In production I would:
 
 ## Known gaps
 
+- **Planned next: per-record visibility.** Today everyone can view every record in their organization. The next
+  step is a visibility setting on each record: "organization" (the default, as now) or "restricted" (owner, managers
+  and admins only). A restricted record would answer 404 to anyone else and never appear in their lists, and only
+  the owner, a manager or an admin could change the setting. Sharing with named people or teams is deliberately
+  left for later.
 - No endpoints to manage organizations or users; they come from seed data.
 - No optimistic locking: two simultaneous edits of one record are last-write-wins.
 - No audit trail of who changed what, and no rate limiting.
