@@ -9,11 +9,16 @@ import jakarta.persistence.Id;
 import jakarta.persistence.MappedSuperclass;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Version;
 
 /**
  * Base for every CRM record: it belongs to one organization and is owned by
  * one user of that organization. org_id is written once and never updated.
  * Only {@link OwnedRecordService} (same package) can set organization and owner.
+ *
+ * version is managed by JPA for optimistic locking: it starts at 0, goes up by
+ * one on every update that changes something, and an update based on an older
+ * version is refused. Clients see it in the JSON body and as the ETag header.
  */
 @MappedSuperclass
 public abstract class OwnedRecord {
@@ -33,6 +38,10 @@ public abstract class OwnedRecord {
 
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @Version
+    @Column(nullable = false)
+    private long version;
 
     @PrePersist
     void onCreate() {
@@ -70,5 +79,9 @@ public abstract class OwnedRecord {
 
     public Instant getUpdatedAt() {
         return updatedAt;
+    }
+
+    public long getVersion() {
+        return version;
     }
 }

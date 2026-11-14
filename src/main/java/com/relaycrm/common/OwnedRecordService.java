@@ -2,11 +2,14 @@ package com.relaycrm.common;
 
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.CurrentUserContext;
 import com.relaycrm.auth.UserRepository;
 
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,15 +21,19 @@ import tools.jackson.databind.JsonNode;
  *
  *   1. scope by organization - a record outside the caller's organization is "not found" (404);
  *   2. check the role rule   - otherwise 403;
- *   3. do the work.
+ *   3. for PUT and PATCH, check If-Match against the record's version - 428 if missing, 412 if stale;
+ *   4. do the work.
  *
- * PUT (update) and PATCH (patch) share steps 1 and 2 (loadForEdit) and the
+ * PUT (update) and PATCH (patch) share steps 1 to 3 (loadForEdit) and the
  * final write (applyAndSave); they differ only in how the new values arrive.
  * Request bodies are read and validated by {@link RequestReader} after the
  * access checks, so a caller learns nothing about a record they may not edit.
  */
 @Transactional
 public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record & OwnedRecordRequest> {
+
+    /** The only accepted If-Match value: one quoted version number, such as "3". */
+    private static final Pattern IF_MATCH = Pattern.compile("\"(\\d{1,18})\"");
 
     private final OwnedRecordRepository<E> repository;
     private final UserRepository users;
@@ -72,17 +79,17 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     }
 
     /** PUT: the body replaces the whole record; optional fields left out are cleared. */
-    public E update(Long id, JsonNode body) {
+    public E update(Long id, String ifMatch, JsonNode body) {
         CurrentUser user = CurrentUserContext.require();
-        E entity = loadForEdit(id, user);
+        E entity = loadForEdit(id, user, ifMatch);
         R request = requests.read(body, requestType, OnUpdate.class);
         return applyAndSave(user, entity, request);
     }
 
     /** PATCH: fields in the patch replace the current values; everything else stays as it is. */
-    public E patch(Long id, JsonNode patch) {
+    public E patch(Long id, String ifMatch, JsonNode patch) {
         CurrentUser user = CurrentUserContext.require();
-        E entity = loadForEdit(id, user);
+        E entity = loadForEdit(id, user, ifMatch);
         // A record always has an owner: leave ownerId out to keep it, but it cannot be cleared.
         if (patch != null && patch.has("ownerId") && patch.get("ownerId").isNull()) {
             throw ApiErrors.invalidFields(Map.of("ownerId", "must not be null"));
@@ -96,7 +103,10 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         if (!AccessPolicy.canDelete(user)) {
             throw ApiErrors.forbidden("Only admins can delete records");
         }
-        repository.delete(load(id, user));
+        // One DELETE statement, no version check: if someone else deleted the record first, this is a 404.
+        if (repository.deleteByIdInOrg(id, user.orgId()) == 0) {
+            throw ApiErrors.notFound(label, id);
+        }
     }
 
     private E load(Long id, CurrentUser user) {
@@ -104,10 +114,21 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
                 .orElseThrow(() -> ApiErrors.notFound(label, id));
     }
 
-    private E loadForEdit(Long id, CurrentUser user) {
+    /** Access first (404, then 403), and only then the version the caller says they are editing (428, 400, 412). */
+    private E loadForEdit(Long id, CurrentUser user, String ifMatch) {
         E entity = load(id, user);
         if (!AccessPolicy.canEdit(user, entity)) {
             throw ApiErrors.forbidden("Reps can only edit records they own");
+        }
+        if (ifMatch == null) {
+            throw ApiErrors.preconditionRequired();
+        }
+        Matcher version = IF_MATCH.matcher(ifMatch.trim());
+        if (!version.matches()) {
+            throw ApiErrors.badRequest("If-Match must be one quoted version number, for example \"3\"");
+        }
+        if (Long.parseLong(version.group(1)) != entity.getVersion()) {
+            throw ApiErrors.preconditionFailed();
         }
         return entity;
     }
@@ -115,7 +136,12 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     private E applyAndSave(CurrentUser user, E entity, R request) {
         entity.setOwnerId(resolveOwner(user, request.ownerId(), entity.getOwnerId()));
         apply(entity, request, user);
-        return repository.saveAndFlush(entity);
+        try {
+            return repository.saveAndFlush(entity);
+        } catch (OptimisticLockingFailureException e) {
+            // Someone saved between our version check and our write: the database refused the stale update.
+            throw ApiErrors.preconditionFailed();
+        }
     }
 
     /** The owner stays as it is unless the request names someone else, who must be a user of the same organization. */
