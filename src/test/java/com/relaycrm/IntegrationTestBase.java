@@ -17,6 +17,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 /**
@@ -62,14 +63,40 @@ public abstract class IntegrationTestBase {
         return mvc.perform(post(path).header("X-Api-Key", apiKey).contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
+    /** PUT based on the record's current version, as a well-behaved client would send it. */
     protected ResultActions doPut(String apiKey, String path, String json) throws Exception {
-        return mvc.perform(put(path).header("X-Api-Key", apiKey).contentType(MediaType.APPLICATION_JSON).content(json));
+        return doPut(apiKey, path, currentEtag(apiKey, path), json);
     }
 
-    /** PATCH with a JSON Merge Patch body. */
+    /** PUT with an explicit If-Match value; null sends no If-Match header. */
+    protected ResultActions doPut(String apiKey, String path, String ifMatch, String json) throws Exception {
+        return mvc.perform(withIfMatch(put(path), ifMatch).header("X-Api-Key", apiKey)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    /** PATCH with a JSON Merge Patch body, based on the record's current version. */
     protected ResultActions doPatch(String apiKey, String path, String json) throws Exception {
-        return mvc.perform(patch(path).header("X-Api-Key", apiKey)
+        return doPatch(apiKey, path, currentEtag(apiKey, path), json);
+    }
+
+    /** PATCH with an explicit If-Match value; null sends no If-Match header. */
+    protected ResultActions doPatch(String apiKey, String path, String ifMatch, String json) throws Exception {
+        return mvc.perform(withIfMatch(patch(path), ifMatch).header("X-Api-Key", apiKey)
                 .contentType("application/merge-patch+json").content(json));
+    }
+
+    /**
+     * The ETag the caller gets when reading the record. A caller who cannot read
+     * it (another organization, or no such id) sends a guess, "0": those requests
+     * are refused before the version is looked at.
+     */
+    protected String currentEtag(String apiKey, String path) throws Exception {
+        String etag = doGet(apiKey, path).andReturn().getResponse().getHeader("ETag");
+        return etag != null ? etag : "\"0\"";
+    }
+
+    private static MockHttpServletRequestBuilder withIfMatch(MockHttpServletRequestBuilder request, String ifMatch) {
+        return ifMatch == null ? request : request.header("If-Match", ifMatch);
     }
 
     protected ResultActions doDelete(String apiKey, String path) throws Exception {

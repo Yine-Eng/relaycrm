@@ -25,6 +25,18 @@ public final class ApiErrors {
         return error(HttpStatus.BAD_REQUEST, detail);
     }
 
+    /** 428: an update arrived without the If-Match header. */
+    public static ErrorResponseException preconditionRequired() {
+        return error(HttpStatus.PRECONDITION_REQUIRED,
+                "If-Match header is required: send the version from the record's ETag, for example If-Match: \"3\"");
+    }
+
+    /** 412: the record changed after the caller read it. */
+    public static ErrorResponseException preconditionFailed() {
+        return error(HttpStatus.PRECONDITION_FAILED,
+                "The record was changed by someone else. Fetch it again and retry with the new ETag");
+    }
+
     /** 400 that names each rejected field: {"errors": {"lastName": "must not be blank"}}. */
     public static ErrorResponseException invalidFields(Map<String, String> errors) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(

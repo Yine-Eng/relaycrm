@@ -20,9 +20,9 @@ In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profi
 
 Every pull request, and every merge to `main`, runs `./mvnw verify` in GitHub Actions (`.github/workflows/ci.yml`).
 
-`demo.sh` sends about 55 requests as different users and prints, for each, the expected and the actual HTTP status:
-both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, and the
-PUT / PATCH update rules.
+`demo.sh` sends about 65 requests as different users and prints, for each, the expected and the actual HTTP status:
+both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, the
+PUT / PATCH update rules, and two people editing the same record.
 
 ### Demo users
 
@@ -60,16 +60,18 @@ the caller is.
 | `Content-Type` | `application/json` | `application/merge-patch+json` (JSON Merge Patch, RFC 7396); anything else is 415 |
 | Field left out | Optional field: cleared. Required field: 400 | Unchanged |
 | Field sent as `null` | Optional field: cleared. Required field: 400 | Optional field: cleared. Required field: 400 |
+| `If-Match` | Required: the version the update is based on | Required: the version the update is based on |
 
-Example, for a contact that has a phone number and a company:
+Example, for a contact that has a phone number and a company and is at version 0 (`If-Match` is explained in the
+next section):
 
 ```bash
-# Change the company; the name, email and phone stay as they are.
-curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
+# Change the company; the name, email and phone stay as they are. The contact moves to version 1.
+curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" -H 'If-Match: "0"' \
      -H "Content-Type: application/merge-patch+json" -d '{"company": "Road Runner Group"}'
 
 # Clear the phone number.
-curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
+curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" -H 'If-Match: "1"' \
      -H "Content-Type: application/merge-patch+json" -d '{"phone": null}'
 ```
 
@@ -88,7 +90,48 @@ curl -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" \
 - **Every 400 names the fields**, for example
   `{"status": 400, "detail": "Invalid fields: lastName", "errors": {"lastName": "must not be blank"}}`.
 - **Access is checked before the body.** A request for a record the caller may not edit gets 404 or 403 whatever the
-  body contains.
+  body or the `If-Match` header contains. The order is: access (404, 403), then the version (428, 412), then the
+  body (400).
+
+### Two people editing the same record: If-Match
+
+Every record has a `version` number that starts at 0 and goes up by one each time the record is changed. It is in
+the JSON body and in the `ETag` response header of `GET /{id}`, POST, PUT and PATCH, for example `ETag: "3"`.
+
+A PUT or PATCH must send the version it is based on in the `If-Match` header:
+
+| Request | Answer |
+|---|---|
+| `If-Match` is the record's current version | 200, with the new version in the body and in `ETag` |
+| `If-Match` is an older (or any other) version | 412 Precondition Failed; the record is not changed |
+| No `If-Match` header | 428 Precondition Required |
+| Anything but one quoted number: `*`, `W/"3"`, `"1", "2"`, `"abc"` | 400 |
+
+```bash
+# 1. Read the record and note its ETag.
+curl -i localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key"
+#    HTTP/1.1 200
+#    ETag: "0"
+
+# 2. Save, saying which version the change is based on. The answer carries ETag: "1".
+curl -i -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-admin-key" -H 'If-Match: "0"' \
+     -H "Content-Type: application/merge-patch+json" -d '{"phone": "555-0111"}'
+
+# 3. Someone else who also read version 0 now tries to save: 412, and the phone number above survives.
+#    They read the record again (ETag: "1"), look at what changed, and retry with If-Match: "1".
+curl -i -X PATCH localhost:8080/api/contacts/1 -H "X-Api-Key: acme-manager-key" -H 'If-Match: "0"' \
+     -H "Content-Type: application/merge-patch+json" -d '{"company": "Road Runner Group"}'
+```
+
+- **The header is the only way to send the version.** `version` in a request body is an unknown field (400).
+- **`If-Match: *` is refused.** In plain HTTP it means "whatever is there now", which would bring back the silent
+  overwrite this feature exists to prevent.
+- **An update that changes nothing keeps the version.** A PATCH with `{}`, or with the values the record already has,
+  answers 200 with the same `version` and `ETag`: the record is the same, so its ETag is too.
+- **Two saves at the very same moment** are both based on the current version and both pass the check above. The
+  database decides: each UPDATE only applies `WHERE version = <the version read>`, so exactly one succeeds and
+  the other gets the same 412.
+- **DELETE takes no `If-Match`** (see Known gaps). Of two simultaneous deletes, the second gets 404.
 
 Details that the brief left open, and what I chose:
 
@@ -144,18 +187,21 @@ The role rules live in one small class, `AccessPolicy`, and are applied after th
 src/main/java/com/relaycrm
   auth/         ApiKeyAuthFilter (stub login), CurrentUser, CurrentUserContext, User, Role
   tenancy/      TenantAwareTransactionManager (sets app.current_org), startup check on the database role
-  common/       OwnedRecord (base entity), OwnedRecordService (the access rules), AccessPolicy, ApiErrors,
+  common/       OwnedRecord (base entity, with the version), OwnedRecordService (the access rules and the
+                If-Match check), AccessPolicy, ApiErrors, RecordResponse (adds the ETag header),
                 RequestReader (reads and validates POST / PUT / PATCH bodies)
   contact/      entity, request, repository, service, controller
   lead/         same
   opportunity/  same, plus the same-organization contact check
 src/main/resources/db
   migration/V1__schema.sql    tables, composite foreign keys, row-level security, application role
+  migration/V2__version.sql   version column for optimistic locking
   demo/R__demo_data.sql       two organizations, six users, sample records ("demo" profile only)
 src/test/java/com/relaycrm
   TenantIsolationTest         cross-tenant requests over HTTP, plus row-level security tested with raw SQL
   RolePermissionTest          role rules inside one organization
   UpdateSemanticsTest         PUT replacement, PATCH merging, required and unknown fields
+  OptimisticLockingTest       If-Match: stale, missing and malformed versions, and two saves forced to race
 demo.sh                       live walkthrough
 ```
 
@@ -181,7 +227,7 @@ In production I would:
   the owner, a manager or an admin could change the setting. Sharing with named people or teams is deliberately
   left for later.
 - No endpoints to manage organizations or users; they come from seed data.
-- No optimistic locking: two simultaneous edits of one record are last-write-wins.
+- DELETE does not check If-Match, so a delete can remove a record someone just edited.
 - No audit trail of who changed what, and no rate limiting.
 - The `users` table is not under row-level security, because the login lookup runs before the organization is
   known. The API never exposes other organizations' users, but that rests on application code alone.
