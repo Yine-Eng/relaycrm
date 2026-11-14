@@ -1,3 +1,9 @@
+# Every setting that differs between machines comes from an environment variable, with a
+# local-development default. docs/deploy/DEPLOY.md lists what the hosted demo sets.
+server:
+  # Hosting platforms (Render among them) say which port to listen on in $PORT.
+  port: ${PORT:8080}
+
 spring:
   application:
     name: relaycrm
@@ -7,6 +13,9 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/relaycrm}
     username: ${DB_APP_USER:relaycrm_app}
     password: ${DB_APP_PASSWORD:app_secret}
+    hikari:
+      # A small instance (512 MB) and a free database tier both do better with fewer connections.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
   flyway:
     # Migrations run as the schema owner, a different (privileged) role.
     user: ${DB_OWNER_USER:relaycrm_owner}
@@ -24,3 +33,13 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only the health check, for the hosting platform: {"status":"UP"} or 503. Nothing else.
+        include: health
+  endpoint:
+    health:
+      show-details: never

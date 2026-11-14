@@ -44,7 +44,7 @@ public abstract class IntegrationTestBase {
     protected static final String GLOBEX_ADMIN = "globex-admin-key";     // user 5
     protected static final String GLOBEX_REP = "globex-rep-key";         // user 6
 
-    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
+    protected static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17-alpine");
 
     static {
         POSTGRES.start();

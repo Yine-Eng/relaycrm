@@ -8,6 +8,9 @@
  */
 export const DEMO_MODE: boolean = import.meta.env.VITE_DEMO_MODE === 'true'
 
+/** The hosted public demo (set only in netlify.toml): anyone on the internet can use and change it. */
+export const PUBLIC_DEMO: boolean = DEMO_MODE && import.meta.env.VITE_PUBLIC_DEMO === 'true'
+
 export type Role = 'ADMIN' | 'MANAGER' | 'REP'
 
 export interface DemoUser {

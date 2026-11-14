@@ -5,7 +5,6 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { isApiError } from '@/api/errors'
 import { SessionProvider } from '@/auth/session'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/theme/theme'
@@ -15,9 +14,9 @@ import { routeTree } from './routeTree.gen'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // A 4xx will not change by asking again; a network error or 5xx is retried once.
-      retry: (failures, error) =>
-        failures < 1 && !(isApiError(error) && error.status >= 400 && error.status < 500),
+      // apiFetch already retries a GET while the server is starting (see api/client.ts); any other
+      // error will not change by asking again.
+      retry: false,
       refetchOnWindowFocus: false,
     },
   },

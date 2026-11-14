@@ -1,0 +1,7 @@
+# The image is built from the backend sources only. Everything else stays out of the build
+# context: the frontend, build output, IDE files, git history, docs, local secrets.
+*
+!mvnw
+!.mvn/
+!pom.xml
+!src/
