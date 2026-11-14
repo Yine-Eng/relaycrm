@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.relaycrm.audit.AuditEvent;
+import com.relaycrm.audit.AuditLog;
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.CurrentUserContext;
 import com.relaycrm.auth.UserRepository;
@@ -22,12 +24,16 @@ import tools.jackson.databind.JsonNode;
  *   1. scope by organization - a record outside the caller's organization is "not found" (404);
  *   2. check the role rule   - otherwise 403;
  *   3. for PUT and PATCH, check If-Match against the record's version - 428 if missing, 412 if stale;
- *   4. do the work.
+ *   4. do the work;
+ *   5. record what changed in the audit trail, in the same transaction.
  *
  * PUT (update) and PATCH (patch) share steps 1 to 3 (loadForEdit) and the
  * final write (applyAndSave); they differ only in how the new values arrive.
  * Request bodies are read and validated by {@link RequestReader} after the
  * access checks, so a caller learns nothing about a record they may not edit.
+ *
+ * Any exception rolls the transaction back, so a request that fails leaves
+ * neither a change nor an audit event behind.
  */
 @Transactional
 public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record & OwnedRecordRequest> {
@@ -38,16 +44,21 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     private final OwnedRecordRepository<E> repository;
     private final UserRepository users;
     private final RequestReader requests;
+    private final AuditLog audit;
     private final Class<R> requestType;
     private final String label;
+    /** How this record type is named in the audit trail: CONTACT, LEAD or OPPORTUNITY. */
+    private final String entityType;
 
     protected OwnedRecordService(OwnedRecordRepository<E> repository, UserRepository users,
-                                 RequestReader requests, Class<R> requestType, String label) {
+                                 RequestReader requests, AuditLog audit, Class<R> requestType, String label) {
         this.repository = repository;
         this.users = users;
         this.requests = requests;
+        this.audit = audit;
         this.requestType = requestType;
         this.label = label;
+        this.entityType = label.toUpperCase();
     }
 
     protected abstract E newEntity();
@@ -55,7 +66,10 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     /** Copy the type-specific fields from the request onto the entity. */
     protected abstract void apply(E entity, R request, CurrentUser user);
 
-    /** The entity's current values in request form: the starting point for a PATCH. */
+    /**
+     * The entity's current values in request form: the starting point for a PATCH,
+     * and the "before" and "after" that the audit trail compares.
+     */
     protected abstract R toRequest(E entity);
 
     @Transactional(readOnly = true)
@@ -75,7 +89,9 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         entity.setOrgId(user.orgId());
         entity.setOwnerId(resolveOwner(user, request.ownerId(), user.id()));
         apply(entity, request, user);
-        return repository.saveAndFlush(entity);
+        E saved = repository.saveAndFlush(entity);
+        audit.created(user, entityType, saved.getId(), saved.getVersion(), toRequest(saved));
+        return saved;
     }
 
     /** PUT: the body replaces the whole record; optional fields left out are cleared. */
@@ -103,10 +119,34 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         if (!AccessPolicy.canDelete(user)) {
             throw ApiErrors.forbidden("Only admins can delete records");
         }
-        // One DELETE statement, no version check: if someone else deleted the record first, this is a 404.
+        // Lock the row and keep its last values for the audit trail. If someone else deleted the
+        // record first, there is nothing to lock: 404, and no audit event.
+        E entity = repository.findLockedByIdAndOrgId(id, user.orgId())
+                .orElseThrow(() -> ApiErrors.notFound(label, id));
+        // One DELETE statement, no version check.
         if (repository.deleteByIdInOrg(id, user.orgId()) == 0) {
             throw ApiErrors.notFound(label, id);
         }
+        audit.deleted(user, entityType, id, entity.getVersion(), toRequest(entity));
+    }
+
+    /**
+     * Who changed this record, when, and what: newest first. A record that still
+     * exists shows its history to everyone in its organization. After it is
+     * deleted, only managers and admins can read the history; for anyone else,
+     * and for other organizations, it is "not found" like the record itself.
+     */
+    @Transactional(readOnly = true)
+    public List<AuditEvent> history(Long id, Pageable pageable) {
+        CurrentUser user = CurrentUserContext.require();
+        if (!repository.existsByIdAndOrgId(id, user.orgId())) {
+            boolean deletedAndVisible = AccessPolicy.canViewHistoryOfDeletedRecords(user)
+                    && audit.hasEvents(user.orgId(), entityType, id);
+            if (!deletedAndVisible) {
+                throw ApiErrors.notFound(label, id);
+            }
+        }
+        return audit.history(user.orgId(), entityType, id, pageable);
     }
 
     private E load(Long id, CurrentUser user) {
@@ -134,14 +174,19 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     }
 
     private E applyAndSave(CurrentUser user, E entity, R request) {
+        R before = toRequest(entity);
         entity.setOwnerId(resolveOwner(user, request.ownerId(), entity.getOwnerId()));
         apply(entity, request, user);
+        E saved;
         try {
-            return repository.saveAndFlush(entity);
+            saved = repository.saveAndFlush(entity);
         } catch (OptimisticLockingFailureException e) {
             // Someone saved between our version check and our write: the database refused the stale update.
             throw ApiErrors.preconditionFailed();
         }
+        // Writes an event only if a field really changed, so a no-op update leaves no trace.
+        audit.updated(user, entityType, saved.getId(), saved.getVersion(), before, toRequest(saved));
+        return saved;
     }
 
     /** The owner stays as it is unless the request names someone else, who must be a user of the same organization. */

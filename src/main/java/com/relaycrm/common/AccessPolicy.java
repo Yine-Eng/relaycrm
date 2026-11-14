@@ -23,6 +23,14 @@ public final class AccessPolicy {
         return user.role() == Role.ADMIN;
     }
 
+    /**
+     * The history of a record that still exists is visible to everyone who can see
+     * the record. Once the record is deleted, only managers and admins may read it.
+     */
+    public static boolean canViewHistoryOfDeletedRecords(CurrentUser user) {
+        return user.role() != Role.REP;
+    }
+
     /** Only managers and admins may give a record to another user. */
     public static boolean canAssignToOthers(CurrentUser user) {
         return user.role() != Role.REP;

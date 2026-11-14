@@ -2,6 +2,7 @@ package com.relaycrm.opportunity;
 
 import java.util.List;
 
+import com.relaycrm.audit.AuditEvent;
 import com.relaycrm.common.RecordResponse;
 
 import org.springframework.data.domain.Pageable;
@@ -67,6 +68,12 @@ public class OpportunityController {
             @RequestHeader(value = "If-Match", required = false) String ifMatch,
             @RequestBody JsonNode patch) {
         return RecordResponse.ok(service.patch(id, ifMatch, patch));
+    }
+
+    /** Who changed this record, when, and what: newest first (?page=0&size=50). */
+    @GetMapping("/{id}/history")
+    public List<AuditEvent> history(@PathVariable Long id, @PageableDefault(size = 50) Pageable pageable) {
+        return service.history(id, pageable);
     }
 
     @DeleteMapping("/{id}")
