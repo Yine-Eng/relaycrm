@@ -31,6 +31,11 @@ public final class AccessPolicy {
         return user.role() != Role.REP;
     }
 
+    /** A rep sees only their own tasks; managers and admins see every task in the organization. */
+    public static boolean canViewTasksOfOthers(CurrentUser user) {
+        return user.role() != Role.REP;
+    }
+
     /** Only managers and admins may give a record to another user. */
     public static boolean canAssignToOthers(CurrentUser user) {
         return user.role() != Role.REP;

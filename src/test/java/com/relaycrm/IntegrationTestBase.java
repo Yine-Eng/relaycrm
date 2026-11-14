@@ -6,6 +6,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
 import com.jayway.jsonpath.JsonPath;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -107,6 +112,25 @@ public abstract class IntegrationTestBase {
     protected long create(String apiKey, String path, String json) throws Exception {
         String body = doPost(apiKey, path, json).andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(body, "$.id")).longValue();
+    }
+
+    /**
+     * A direct connection as the role that owns the tables (in this test database
+     * also a superuser): not limited by row-level security, so tests can look at
+     * what is really stored.
+     */
+    protected static Connection ownerConnection() throws Exception {
+        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+    }
+
+    /** Runs a "select count(*) ..." (or any single-number query) as the owner role. */
+    protected static long ownerQueryForLong(String query) throws Exception {
+        try (Connection owner = ownerConnection();
+             Statement sql = owner.createStatement();
+             ResultSet rows = sql.executeQuery(query)) {
+            rows.next();
+            return rows.getLong(1);
+        }
     }
 
     protected static String contactJson(String lastName) {

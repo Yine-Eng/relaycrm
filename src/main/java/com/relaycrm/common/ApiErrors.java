@@ -1,5 +1,7 @@
 package com.relaycrm.common;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
@@ -23,6 +25,29 @@ public final class ApiErrors {
 
     public static ErrorResponseException badRequest(String detail) {
         return error(HttpStatus.BAD_REQUEST, detail);
+    }
+
+    /** 409: the request is valid, but not for the record as it is now. */
+    public static ErrorResponseException conflict(String detail) {
+        return error(HttpStatus.CONFLICT, detail);
+    }
+
+    /**
+     * 409 for a stage or status move that the rules do not allow. The body says
+     * where the record is, where the caller wanted to take it, and where it may go:
+     * {"field": "stage", "from": "WON", "to": "PROPOSAL", "allowed": []}.
+     */
+    public static ErrorResponseException invalidTransition(String field, Enum<?> from, Enum<?> to,
+                                                           Collection<? extends Enum<?>> allowed) {
+        List<String> names = allowed.stream().sorted().map(Enum::name).toList();
+        String detail = "Cannot change " + field + " from " + from + " to " + to + ". "
+                + (names.isEmpty() ? from + " is final" : "Allowed from " + from + ": " + String.join(", ", names));
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, detail);
+        problem.setProperty("field", field);
+        problem.setProperty("from", from.name());
+        problem.setProperty("to", to.name());
+        problem.setProperty("allowed", names);
+        return new ErrorResponseException(HttpStatus.CONFLICT, problem, null);
     }
 
     /** 428: an update arrived without the If-Match header. */

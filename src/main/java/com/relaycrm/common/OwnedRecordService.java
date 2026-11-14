@@ -24,8 +24,9 @@ import tools.jackson.databind.JsonNode;
  *   1. scope by organization - a record outside the caller's organization is "not found" (404);
  *   2. check the role rule   - otherwise 403;
  *   3. for PUT and PATCH, check If-Match against the record's version - 428 if missing, 412 if stale;
- *   4. do the work;
- *   5. record what changed in the audit trail, in the same transaction.
+ *   4. do the work (a rule of the record type may still refuse it: 400, or 409 for a stage move);
+ *   5. record what changed in the audit trail, in the same transaction;
+ *   6. let the record type react (afterSave, beforeDelete), still in the same transaction.
  *
  * PUT (update) and PATCH (patch) share steps 1 to 3 (loadForEdit) and the
  * final write (applyAndSave); they differ only in how the new values arrive.
@@ -72,6 +73,28 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
      */
     protected abstract R toRequest(E entity);
 
+    /**
+     * May this user see this record of their own organization? Yes by default.
+     * A record the user may not see is "not found" (404) everywhere.
+     */
+    protected boolean canView(CurrentUser user, E entity) {
+        return true;
+    }
+
+    /**
+     * Called after a create (before is null) or an update has been saved and
+     * audited, inside the same transaction. An exception here undoes the save.
+     */
+    protected void afterSave(CurrentUser user, R before, E saved) {
+    }
+
+    /**
+     * Called just before a record is deleted, inside the same transaction, with
+     * the row locked. An exception here stops the delete.
+     */
+    protected void beforeDelete(CurrentUser user, E entity) {
+    }
+
     @Transactional(readOnly = true)
     public List<E> list(Pageable pageable) {
         return repository.findByOrgId(CurrentUserContext.require().orgId(), pageable);
@@ -91,6 +114,7 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         apply(entity, request, user);
         E saved = repository.saveAndFlush(entity);
         audit.created(user, entityType, saved.getId(), saved.getVersion(), toRequest(saved));
+        afterSave(user, null, saved);
         return saved;
     }
 
@@ -123,6 +147,7 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         // record first, there is nothing to lock: 404, and no audit event.
         E entity = repository.findLockedByIdAndOrgId(id, user.orgId())
                 .orElseThrow(() -> ApiErrors.notFound(label, id));
+        beforeDelete(user, entity);
         // One DELETE statement, no version check.
         if (repository.deleteByIdInOrg(id, user.orgId()) == 0) {
             throw ApiErrors.notFound(label, id);
@@ -139,18 +164,19 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
     @Transactional(readOnly = true)
     public List<AuditEvent> history(Long id, Pageable pageable) {
         CurrentUser user = CurrentUserContext.require();
-        if (!repository.existsByIdAndOrgId(id, user.orgId())) {
-            boolean deletedAndVisible = AccessPolicy.canViewHistoryOfDeletedRecords(user)
-                    && audit.hasEvents(user.orgId(), entityType, id);
-            if (!deletedAndVisible) {
-                throw ApiErrors.notFound(label, id);
-            }
+        E existing = repository.findByIdAndOrgId(id, user.orgId()).orElse(null);
+        boolean visible = existing != null
+                ? canView(user, existing)
+                : AccessPolicy.canViewHistoryOfDeletedRecords(user) && audit.hasEvents(user.orgId(), entityType, id);
+        if (!visible) {
+            throw ApiErrors.notFound(label, id);
         }
         return audit.history(user.orgId(), entityType, id, pageable);
     }
 
     private E load(Long id, CurrentUser user) {
         return repository.findByIdAndOrgId(id, user.orgId())
+                .filter(entity -> canView(user, entity))
                 .orElseThrow(() -> ApiErrors.notFound(label, id));
     }
 
@@ -186,6 +212,7 @@ public abstract class OwnedRecordService<E extends OwnedRecord, R extends Record
         }
         // Writes an event only if a field really changed, so a no-op update leaves no trace.
         audit.updated(user, entityType, saved.getId(), saved.getVersion(), before, toRequest(saved));
+        afterSave(user, before, saved);
         return saved;
     }
 

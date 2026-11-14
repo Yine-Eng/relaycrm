@@ -119,9 +119,9 @@ class UpdateSemanticsTest extends IntegrationTestBase {
 
         long oppId = create(ACME_REP_RITA, "/api/opportunities",
                 "{\"name\":\"Deal\",\"contactId\":1,\"amount\":1200.50,\"closeDate\":\"2027-03-31\"}");
-        doPatch(ACME_REP_RITA, "/api/opportunities/" + oppId, "{\"stage\":\"WON\"}")
+        doPatch(ACME_REP_RITA, "/api/opportunities/" + oppId, "{\"stage\":\"PROPOSAL\"}")
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.stage", is("WON")))
+                .andExpect(jsonPath("$.stage", is("PROPOSAL")))
                 .andExpect(jsonPath("$.name", is("Deal")))
                 .andExpect(jsonPath("$.contactId", is(1)))
                 .andExpect(jsonPath("$.amount", is(1200.50)))

@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Map;
@@ -355,10 +354,6 @@ class AuditTrailTest extends IntegrationTestBase {
     }
 
     // --- Counting events directly in the database, as the owner (not limited by row-level security) ---
-
-    private static Connection ownerConnection() throws Exception {
-        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
-    }
 
     private static long eventCount() throws Exception {
         return count("select count(*) from audit_events");
