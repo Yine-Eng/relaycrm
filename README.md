@@ -18,7 +18,10 @@ bash demo.sh                                               # live walkthrough (s
 In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profile argument:
 `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=demo"`.
 
-Every pull request, and every merge to `main`, runs `./mvnw verify` in GitHub Actions (`.github/workflows/ci.yml`).
+Every pull request, and every merge to `main`, runs `./mvnw verify` and the frontend checks in GitHub Actions
+(`.github/workflows/ci.yml`).
+
+The web app is in `frontend/`; see [Frontend](#frontend) to run it next to the API.
 
 `demo.sh` sends over 100 requests as different users and prints, for each, the expected and the actual HTTP status:
 both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, the
@@ -306,6 +309,105 @@ body is read, for PUT and PATCH alike. Typed `@RequestBody` for POST and PUT was
 needs the raw body anyway, so it would have added a second error-handling path that must produce identical
 responses, and PUT would have validated the body before checking access.
 
+## Frontend
+
+A React app in `frontend/`. So far it is the foundation: the app shell, the "View as" switcher, the API client and
+the design system. The pages are placeholders until the next sessions fill them.
+
+![The design system page, dark theme](docs/frontend-design-dark.png)
+
+### Run it
+
+Needs Node 24. Start the API first (see [Run it](#run-it)), then in a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:5173 ; /api is forwarded to localhost:8080, so no CORS setup
+```
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server with hot reload |
+| `npm run lint` / `npm run format:check` | ESLint (type-aware) / Prettier |
+| `npm run typecheck` | TypeScript, strict |
+| `npm test` | Vitest + Testing Library |
+| `npm run build` | Production build into `frontend/dist` |
+| `npm run gen:api` | Regenerates `src/api/schema.d.ts` from the running API's `/v3/api-docs` |
+
+**Generated API types.** The backend describes itself with springdoc-openapi at `/v3/api-docs` (no key needed).
+`npm run gen:api` turns that into TypeScript types with openapi-typescript. The controllers read bodies as raw
+JSON, so each POST, PUT and PATCH is annotated with its real request type (`ContactRequest`, `LeadRequest`,
+`OpportunityRequest`, `TaskRequest`); `ApiDocsTest` fails if one of them goes back to "any object". Run
+`gen:api` after changing the API, and commit the result.
+
+**Demo mode.** With `VITE_DEMO_MODE=true` (set in `frontend/.env.development`), the top bar has a "View as"
+switcher for the six seeded users. It sends that user's API key with every request, empties the query cache on
+every switch, and shows what `GET /api/me` answered. This is for local demos only: the keys are the public demo
+keys from the seed data. A production build does not read `.env.development`, so the switcher and the keys are
+left out of the bundle entirely and the app shows "Sign-in not configured" until real sign-in is added.
+
+**Stack.** React 19, TypeScript 5.9 (strict), Vite 8, TanStack Router (typed, file-based routes) and TanStack
+Query, Tailwind CSS 4 with shadcn/ui on Radix, Lucide icons, sonner toasts. TypeScript stays on 5.9 because
+typescript-eslint and openapi-typescript do not support 6 or 7 yet.
+
+### Design tokens
+
+All colors are CSS variables in `frontend/src/styles/index.css`. Dark is the default; `data-theme="light"` on any
+element switches everything inside it. Theming never uses `dark:` classes, which is how `/design` shows both
+themes side by side. Contrast ratios are WCAG 2.x, against the page background and the surface.
+
+| Token | Dark | Light | Used for |
+|---|---|---|---|
+| `background` | `#0B0D12` | `#F6F7F9` | Page |
+| `card` (surface) | `#12151C` | `#FFFFFF` | Cards, sidebar |
+| `popover` (raised) | `#181C25` | `#FFFFFF` | Menus, dialogs, toasts |
+| `highlight` | `#2A3142` | `#E2E6EE` | Highlighted menu item, with a 2px `brand` bar on the left (bar 10.1:1 / 5.3:1 against it) |
+| `border` | `#232836` | `#DCE0E8` | Dividers and card edges (decorative) |
+| `input` | `#606A84` (3.6:1) | `#7A8496` (3.5:1) | Form-control borders, 3:1 for UI components |
+| `foreground` | `#E8EAF0` (16.2:1) | `#12151C` (17.0:1) | Text |
+| `muted-foreground` | `#9AA3B5` (7.7:1) | `#566074` (5.9:1) | Secondary text |
+| `subtle-foreground` | `#7C859A` (5.3:1) | `#677185` (4.6:1) | Hints, placeholders |
+| `primary` | `#C6F432` | `#C6F432` | The one accent, as a fill: primary button, "Demo" tag |
+| `primary-foreground` | `#0B0D12` (15.2:1 on lime) | `#0B0D12` (15.2:1) | Text on the accent |
+| `brand` / `ring` | `#C6F432` (15.2:1) | `#4A6600` (6.1:1) | The accent as a line or text: focus ring, live dot |
+| `destructive` | `#F28B82` (8.1:1) | `#B3261E` (6.1:1) | Errors, delete |
+
+Lime on a light background is 1.2:1, so in light mode the lime stays a fill (always with dark text) and a deep lime
+takes over for focus rings and accent text.
+
+| Stage | Dark | Light | Badge text on its own tint (worst case) |
+|---|---|---|---|
+| Prospecting | `#A9B4C8` | `#475569` | 6.8:1 / 5.9:1 |
+| Proposal | `#7DB4FF` | `#1D58C7` | 6.7:1 / 5.0:1 |
+| Negotiation | `#F2B84B` | `#8A5200` | 7.7:1 / 5.0:1 |
+| Won | `#5FD38D` | `#17703C` | 7.4:1 / 4.8:1 |
+| Lost | `#E08A8A` | `#A8403F` | 5.8:1 / 4.8:1 |
+
+The rest of the system:
+- **Type:** Geist for the interface, Geist Mono for ids, amounts and versions (tabular figures), Instrument Serif
+  for a few large headings and empty states.
+- **Space and shape:** an 8px spacing grid, a 10px radius, and 1px borders instead of shadows (only dialogs and
+  menus float).
+- **Motion:** 150-200ms ease-out, switched off under `prefers-reduced-motion`.
+- **Focus:** every focusable element shows a 2px ring in the accent.
+
+### Fonts
+
+Bundled with the app through Fontsource, so the browser never contacts Google Fonts. All three are under the SIL
+Open Font License 1.1:
+
+| Font | Package | License |
+|---|---|---|
+| Geist, Geist Mono | `@fontsource-variable/geist`, `@fontsource-variable/geist-mono` | SIL OFL 1.1 (Vercel) |
+| Instrument Serif | `@fontsource/instrument-serif` | SIL OFL 1.1 (Instrument) |
+
+### Windows note
+
+`npm test` starts Vitest through `scripts/vitest.mjs`. On Windows a terminal can start in `c:\...` (lower-case
+drive), and Vitest 4 and 5 then load their runner twice and fail every file with "failed to find the current
+suite". The script starts Vitest from the `C:\...` spelling of the same folder. It changes nothing elsewhere.
+
 ## How isolation is enforced
 
 Isolation does not rest on a single check. There are three layers, and each one alone would stop a cross-tenant
@@ -360,6 +462,7 @@ src/test/java/com/relaycrm
   UpdateSemanticsTest         PUT replacement, PATCH merging, required and unknown fields
   OptimisticLockingTest       If-Match: stale, missing and malformed versions, and two saves forced to race
   AuditTrailTest              one event per saved change, none otherwise; history visibility; append-only in SQL
+  ApiDocsTest                 the OpenAPI description types every request body (the frontend's types come from it)
   StageTransitionTest         every from/to pair of deal stages and lead statuses: allowed or 409
   FollowUpTaskTest            automatic tasks, duplicate prevention (with a forced race), rollback, task API
 demo.sh                       live walkthrough
@@ -378,7 +481,7 @@ and go through HTTP, or through raw SQL where the claim is about the database it
 | Append-only audit trail | `AuditLog`, `AuditEvent`, `V3__audit_events.sql` | `AuditTrailTest` |
 | Transactional deal-stage transitions | `OpportunityStage`, `LeadStatus`, `OpportunityService`, `LeadService` | `StageTransitionTest` |
 | Automated follow-up task creation with duplicate prevention | `FollowUpTasks`, `TaskService`, `V4__tasks_and_transitions.sql` | `FollowUpTaskTest` |
-| Database-backed integration tests | `IntegrationTestBase` | all seven test classes, run by `./mvnw verify` and CI |
+| Database-backed integration tests | `IntegrationTestBase` | all eight test classes, run by `./mvnw verify` and CI |
 
 ## Authentication: stub now, and in production
 
@@ -419,6 +522,8 @@ In production I would:
 - The seeded demo deal that is already in `PROPOSAL` has no follow-up task: it was inserted by SQL, not through the
   API.
 - No rate limiting.
+- `frontend/src/api/schema.d.ts` is generated and committed. Nothing yet checks in CI that it matches the API, so
+  it can fall behind if someone changes the API and forgets `npm run gen:api`.
 - The `users` table is not under row-level security, because the login lookup runs before the organization is
   known. The API never exposes other organizations' users, but that rests on application code alone.
 - Entities are returned directly as JSON. Request bodies are separate types, so callers cannot set fields such as

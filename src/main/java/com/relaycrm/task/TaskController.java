@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -53,12 +56,16 @@ public class TaskController {
 
     /** A manual task. Automatic ones are created by stage changes, never through this endpoint. */
     @PostMapping
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "The new record. Unknown fields are rejected with 400.",
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = TaskRequest.class)))
     public ResponseEntity<Task> create(@RequestBody JsonNode body) {
         return RecordResponse.created(service.create(body));
     }
 
     /** Complete ({"status": "DONE"}), cancel or edit a task (JSON Merge Patch). */
     @PatchMapping(path = "/{id}", consumes = "application/merge-patch+json")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "JSON Merge Patch (RFC 7396): send only the fields to change, null clears an optional field. Every field is optional here, whatever the schema marks as required.",
+            content = @Content(mediaType = "application/merge-patch+json", schema = @Schema(implementation = TaskRequest.class)))
     public ResponseEntity<Task> patch(@PathVariable Long id,
             @RequestHeader(value = "If-Match", required = false) String ifMatch,
             @RequestBody JsonNode patch) {

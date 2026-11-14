@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -50,12 +53,16 @@ public class ContactController {
     }
 
     @PostMapping
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "The new record. Unknown fields are rejected with 400.",
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = ContactRequest.class)))
     public ResponseEntity<Contact> create(@RequestBody JsonNode body) {
         return RecordResponse.created(service.create(body));
     }
 
     /** Full replacement: optional fields left out are cleared. */
     @PutMapping("/{id}")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "The whole record: optional fields left out are cleared. Unknown fields are rejected with 400.",
+            content = @Content(mediaType = "application/json", schema = @Schema(implementation = ContactRequest.class)))
     public ResponseEntity<Contact> update(@PathVariable Long id,
             @RequestHeader(value = "If-Match", required = false) String ifMatch,
             @RequestBody JsonNode body) {
@@ -64,6 +71,8 @@ public class ContactController {
 
     /** Partial update (JSON Merge Patch): fields left out are unchanged, null clears a field. */
     @PatchMapping(path = "/{id}", consumes = "application/merge-patch+json")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true, description = "JSON Merge Patch (RFC 7396): send only the fields to change, null clears an optional field. Every field is optional here, whatever the schema marks as required.",
+            content = @Content(mediaType = "application/merge-patch+json", schema = @Schema(implementation = ContactRequest.class)))
     public ResponseEntity<Contact> patch(@PathVariable Long id,
             @RequestHeader(value = "If-Match", required = false) String ifMatch,
             @RequestBody JsonNode patch) {
