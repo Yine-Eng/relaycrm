@@ -1,5 +1,6 @@
 package com.relaycrm.contact;
 
+import com.relaycrm.audit.AuditLog;
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.UserRepository;
 import com.relaycrm.common.OwnedRecordService;
@@ -10,8 +11,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class ContactService extends OwnedRecordService<Contact, ContactRequest> {
 
-    public ContactService(ContactRepository contacts, UserRepository users, RequestReader requests) {
-        super(contacts, users, requests, ContactRequest.class, "Contact");
+    public ContactService(ContactRepository contacts, UserRepository users, RequestReader requests,
+                          AuditLog audit) {
+        super(contacts, users, requests, audit, ContactRequest.class, "Contact");
     }
 
     @Override

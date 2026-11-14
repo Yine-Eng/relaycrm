@@ -1,5 +1,6 @@
 package com.relaycrm.lead;
 
+import com.relaycrm.audit.AuditLog;
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.UserRepository;
 import com.relaycrm.common.OwnedRecordService;
@@ -10,8 +11,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class LeadService extends OwnedRecordService<Lead, LeadRequest> {
 
-    public LeadService(LeadRepository leads, UserRepository users, RequestReader requests) {
-        super(leads, users, requests, LeadRequest.class, "Lead");
+    public LeadService(LeadRepository leads, UserRepository users, RequestReader requests,
+                       AuditLog audit) {
+        super(leads, users, requests, audit, LeadRequest.class, "Lead");
     }
 
     @Override

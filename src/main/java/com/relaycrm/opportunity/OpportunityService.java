@@ -1,5 +1,6 @@
 package com.relaycrm.opportunity;
 
+import com.relaycrm.audit.AuditLog;
 import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.UserRepository;
 import com.relaycrm.common.ApiErrors;
@@ -15,8 +16,8 @@ public class OpportunityService extends OwnedRecordService<Opportunity, Opportun
     private final ContactRepository contacts;
 
     public OpportunityService(OpportunityRepository opportunities, UserRepository users, RequestReader requests,
-                              ContactRepository contacts) {
-        super(opportunities, users, requests, OpportunityRequest.class, "Opportunity");
+                              AuditLog audit, ContactRepository contacts) {
+        super(opportunities, users, requests, audit, OpportunityRequest.class, "Opportunity");
         this.contacts = contacts;
     }
 

@@ -20,9 +20,9 @@ In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profi
 
 Every pull request, and every merge to `main`, runs `./mvnw verify` in GitHub Actions (`.github/workflows/ci.yml`).
 
-`demo.sh` sends about 65 requests as different users and prints, for each, the expected and the actual HTTP status:
+`demo.sh` sends about 80 requests as different users and prints, for each, the expected and the actual HTTP status:
 both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, the
-PUT / PATCH update rules, and two people editing the same record.
+PUT / PATCH update rules, two people editing the same record, and the audit trail.
 
 ### Demo users
 
@@ -40,7 +40,7 @@ Send the key in the `X-Api-Key` header, for example
 
 ## API
 
-The same six operations exist for `/api/contacts`, `/api/leads` and `/api/opportunities`. `GET /api/me` shows who
+The same seven operations exist for `/api/contacts`, `/api/leads` and `/api/opportunities`. `GET /api/me` shows who
 the caller is.
 
 | Operation          | REP                | MANAGER | ADMIN | Record in another organization |
@@ -51,6 +51,7 @@ the caller is.
 | `PUT /{id}`        | only if owner      | yes     | yes   | 404                            |
 | `PATCH /{id}`      | only if owner      | yes     | yes   | 404                            |
 | `DELETE /{id}`     | 403                | 403     | yes   | 404 (403 for non-admins)       |
+| `GET /{id}/history` | yes               | yes     | yes   | 404                            |
 
 ### Updating a record: PUT or PATCH
 
@@ -145,6 +146,47 @@ Details that the brief left open, and what I chose:
 - Lists are paged (`?page=0&size=50`).
 - Errors use the standard `application/problem+json` format.
 
+### Audit trail: who changed what, and when
+
+Every saved change to a contact, lead or opportunity writes one event. `GET /{id}/history` returns a record's
+events, newest first, paged (`?page=0&size=50`).
+
+```bash
+# A deal moved from PROPOSAL to WON. Who did it, and what was it before?
+curl localhost:8080/api/opportunities/101/history -H "X-Api-Key: acme-rep-rita-key"
+```
+
+```json
+[
+  {"id": 12, "action": "UPDATE", "actorUserId": 2, "entityType": "OPPORTUNITY", "entityId": 101,
+   "changes": {"stage": {"from": "PROPOSAL", "to": "WON"}},
+   "versionAfter": 1, "createdAt": "2026-11-14T10:15:30Z"},
+  {"id": 11, "action": "CREATE", "actorUserId": 3, "entityType": "OPPORTUNITY", "entityId": 101,
+   "changes": {"name": {"to": "Coyote - anvil contract"}, "stage": {"to": "PROPOSAL"}, "ownerId": {"to": 3}},
+   "versionAfter": 0, "createdAt": "2026-11-14T10:02:11Z"}
+]
+```
+
+Mark (user 2) moved it to WON; before that it was PROPOSAL, as Rita (user 3) created it.
+
+- **What an event holds.** `CREATE`: every field that was given a value (`to`). `UPDATE`: only the fields that
+  changed, with the old and the new value (`from`, `to`), including a change of owner. `DELETE`: the record's last
+  values (`from`). `versionAfter` is the record's version after the change, the same number as its ETag.
+- **An event exists only if the change was saved.** The event is written in the same database transaction as the
+  change. A request that is refused (400, 403, 404, 412, 428) writes nothing, and so does an update that changes
+  nothing. If the event itself cannot be written, the change is rolled back too.
+- **Who can read a history.** While the record exists: everyone who can view the record, that is, everyone in its
+  organization. After the record is deleted: managers and admins only, so that "who deleted this, and what was in
+  it" can still be answered; a rep gets 404, as for the record itself. Another organization always gets 404.
+- **Events cannot be changed or removed.** There is no API for it, and the database refuses it twice: the
+  application's role is granted only `SELECT` and `INSERT` on `audit_events`, and a trigger raises an error on
+  `UPDATE`, `DELETE` and `TRUNCATE` for every role, including the table's owner. A database superuser can still
+  disable triggers, which nothing inside the database can prevent; protecting against that takes measures outside
+  it (restricted superuser access, shipping events to separate write-once storage).
+- **Other organizations' events are invisible** by the same row-level security policy as the records.
+- **The seeded demo records have an empty history** until someone changes them: they were inserted by SQL, not
+  through the API.
+
 ### Design decision: controllers take raw JSON
 
 The POST, PUT and PATCH endpoints receive the body as raw JSON and pass it to `RequestReader`, instead of using
@@ -172,7 +214,7 @@ request.
    - *Row-level security.* Each transaction starts by setting `app.current_org` to the caller's organization
      (`TenantAwareTransactionManager`). A policy on each table hides, and refuses writes to, any row with a different
      `org_id`. So even a future query that forgets its `where org_id = ?` returns nothing from other tenants. If the
-     setting is missing, no rows are visible at all.
+     setting is missing, no rows are visible at all. The audit trail (`audit_events`) is under the same policy.
    - *A restricted database role.* The application connects as `relaycrm_app`, which is neither a superuser nor the
      table owner, so the policies apply to it. Migrations run as a separate owner role. The application refuses to
      start if its role could bypass row-level security.
@@ -187,6 +229,7 @@ The role rules live in one small class, `AccessPolicy`, and are applied after th
 src/main/java/com/relaycrm
   auth/         ApiKeyAuthFilter (stub login), CurrentUser, CurrentUserContext, User, Role
   tenancy/      TenantAwareTransactionManager (sets app.current_org), startup check on the database role
+  audit/        AuditEvent, AuditLog (works out what changed and writes the event), AuditEventRepository
   common/       OwnedRecord (base entity, with the version), OwnedRecordService (the access rules and the
                 If-Match check), AccessPolicy, ApiErrors, RecordResponse (adds the ETag header),
                 RequestReader (reads and validates POST / PUT / PATCH bodies)
@@ -196,12 +239,14 @@ src/main/java/com/relaycrm
 src/main/resources/db
   migration/V1__schema.sql    tables, composite foreign keys, row-level security, application role
   migration/V2__version.sql   version column for optimistic locking
+  migration/V3__audit_events.sql   audit trail: table, row-level security, append-only grants and trigger
   demo/R__demo_data.sql       two organizations, six users, sample records ("demo" profile only)
 src/test/java/com/relaycrm
   TenantIsolationTest         cross-tenant requests over HTTP, plus row-level security tested with raw SQL
   RolePermissionTest          role rules inside one organization
   UpdateSemanticsTest         PUT replacement, PATCH merging, required and unknown fields
   OptimisticLockingTest       If-Match: stale, missing and malformed versions, and two saves forced to race
+  AuditTrailTest              one event per saved change, none otherwise; history visibility; append-only in SQL
 demo.sh                       live walkthrough
 ```
 
@@ -228,7 +273,13 @@ In production I would:
   left for later.
 - No endpoints to manage organizations or users; they come from seed data.
 - DELETE does not check If-Match, so a delete can remove a record someone just edited.
-- No audit trail of who changed what, and no rate limiting.
+- Deleting a record keeps its last values in the audit history; a real erasure request would need an admin-only
+  redaction path that blanks personal fields in past events.
+- The audit trail can only be read per record (`/{id}/history`). There is no organization-wide feed, so the history
+  of a deleted record can only be found by someone who already knows its id.
+- Audit events name the actor by user id only, and record changes made through the API, not changes made directly
+  in the database.
+- No rate limiting.
 - The `users` table is not under row-level security, because the login lookup runs before the organization is
   known. The API never exposes other organizations' users, but that rests on application code alone.
 - Entities are returned directly as JSON. Request bodies are separate types, so callers cannot set fields such as

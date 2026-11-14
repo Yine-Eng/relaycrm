@@ -173,5 +173,24 @@ IF_MATCH='"99"'
 call "Globex admin"  "$GLOBEX_ADMIN" 404 PATCH /api/contacts/$ID '{"company":"Hijacked"}'
 call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/contacts/$ID
 
+section "12. Audit trail: who moved the deal to WON, and what was it before?"
+call "Acme rep Rita" "$ACME_RITA"    201 POST  /api/opportunities '{"name":"Coyote - anvil contract","contactId":1,"amount":8000,"stage":"PROPOSAL"}'
+OPP=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/opportunities/$OPP '{"stage":"WON"}'
+echo "    The history, newest first: Mark (user 2) changed stage from PROPOSAL to WON; Rita (user 3) created it"
+call "Acme rep Ravi" "$ACME_RAVI"    200 GET   /api/opportunities/$OPP/history
+echo "    An update that changes nothing, and a request that is refused, add no event (still 2)"
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/opportunities/$OPP '{"stage":"WON"}'
+call "Acme rep Ravi" "$ACME_RAVI"    403 PATCH /api/opportunities/$OPP '{"stage":"LOST"}'
+call "Acme rep Rita" "$ACME_RITA"    200 GET   /api/opportunities/$OPP/history
+echo "    BLOCKED: another organization cannot read the history"
+call "Globex admin"  "$GLOBEX_ADMIN" 404 GET   /api/opportunities/$OPP/history
+echo "    After a delete, the history (with the record's last values) stays readable for managers and admins only"
+call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/opportunities/$OPP
+call "Acme admin"    "$ACME_ADMIN"   404 GET   /api/opportunities/$OPP
+call "Acme manager"  "$ACME_MANAGER" 200 GET   /api/opportunities/$OPP/history
+call "Acme rep Rita" "$ACME_RITA"    404 GET   /api/opportunities/$OPP/history
+call "Globex admin"  "$GLOBEX_ADMIN" 404 GET   /api/opportunities/$OPP/history
+
 echo
 if [ "$FAILED" = 0 ]; then echo "All steps behaved as expected."; else echo "SOME STEPS DID NOT BEHAVE AS EXPECTED."; exit 1; fi

@@ -3,8 +3,11 @@ package com.relaycrm.common;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,6 +18,13 @@ import org.springframework.data.repository.NoRepositoryBean;
 public interface OwnedRecordRepository<E extends OwnedRecord> extends JpaRepository<E, Long> {
 
     Optional<E> findByIdAndOrgId(Long id, Long orgId);
+
+    /**
+     * Loads the record and locks its row (SELECT ... FOR UPDATE) until the
+     * transaction ends, so nobody can change or delete it in the meantime.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<E> findLockedByIdAndOrgId(Long id, Long orgId);
 
     List<E> findByOrgId(Long orgId, Pageable pageable);
 
