@@ -531,7 +531,7 @@ class FollowUpTaskTest extends IntegrationTestBase {
                 + ",\"leadId\":" + lead + "}")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.leadId", is("a task is about an opportunity or a lead, not both")));
-        doPost(ACME_REP_RITA, "/api/tasks", "{\"title\":\"Ghost\"," + DUE + ",\"opportunityId\":999999}")
+        doPost(ACME_REP_RITA, "/api/tasks", "{\"title\":\"Ghost\"," + DUE + ",\"opportunityId\":" + unusedId("opportunities") + "}")
                 .andExpect(status().isBadRequest());
         // source and dedupeKey are decided by the server: sending them is an unknown field.
         doPost(ACME_REP_RITA, "/api/tasks", "{\"title\":\"Fake\"," + DUE + ",\"source\":\"AUTO\"}")

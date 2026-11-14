@@ -133,6 +133,16 @@ public abstract class IntegrationTestBase {
         }
     }
 
+    /**
+     * An id that no row of this table has, in any organization, and will not get
+     * during the test: well above the highest id handed out so far. Use it for
+     * "this record does not exist" instead of a fixed number, which would only
+     * be right as long as no other test happened to create that many rows.
+     */
+    protected static long unusedId(String table) throws Exception {
+        return ownerQueryForLong("select coalesce(max(id), 0) + 1000 from " + table);
+    }
+
     protected static String contactJson(String lastName) {
         return "{\"firstName\":\"Test\",\"lastName\":\"" + lastName + "\"}";
     }
