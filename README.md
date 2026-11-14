@@ -1,13 +1,17 @@
 # RelayCRM
 
+**[Live demo](https://relaycrm-demo.netlify.app) · [API health](https://relaycrm-api.onrender.com/actuator/health)**
+
 Multi-tenant CRM core: a Spring Boot + PostgreSQL REST API where small sales teams track contacts, leads and
 opportunities. Many companies (organizations) share one deployment, and one organization can never read or change
 another's data.
 
 ## Live demo
 
-- **Web app:** https://YOUR-SITE.netlify.app
+- **Web app:** https://relaycrm-demo.netlify.app
 - **API:** https://relaycrm-api.onrender.com ([health check](https://relaycrm-api.onrender.com/actuator/health))
+
+The first load after the demo has been idle can take up to about 2 minutes while the free API wakes up.
 
 Pick a user with "View as" in the top bar: four at Acme Corp, two at Globex Inc, with different roles.
 

@@ -6,7 +6,7 @@ The public demo runs on three free services:
 |---|---|---|
 | Database | Neon (Postgres 17, AWS US East 2, Ohio) | Project `relaycrm`, database `relaycrm` |
 | API | Render (free web service, Docker, Ohio) | The `Dockerfile` at the repository root |
-| Web app | Netlify | `frontend/`, built with `frontend/netlify.toml` |
+| Web app | Netlify, site `relaycrm-demo` | `frontend/`, built with `frontend/netlify.toml` |
 
 The browser only talks to Netlify. Netlify forwards every `/api/...` request to Render, so the API needs no CORS
 setup and the site and API share one origin. Render talks to Neon over TLS.
@@ -80,7 +80,7 @@ The project `relaycrm` (Postgres 17, AWS US East 2) with the database `relaycrm`
 
    If the app role could get around row-level security (superuser, BYPASSRLS, or owner of a table), the API
    refuses to start and says why.
-5. **Check it.** The service's URL is `https://<service-name>.onrender.com`:
+5. **Check it.** The service's URL is `https://<service-name>.onrender.com`, here `https://relaycrm-api.onrender.com`:
 
    ```bash
    curl https://relaycrm-api.onrender.com/actuator/health
@@ -99,7 +99,9 @@ free plan." If the server takes longer than that, the app shows "API unreachable
 
 1. `frontend/netlify.toml` already forwards `/api/*` to the Render service, `https://relaycrm-api.onrender.com`. If
    the service is ever renamed, change it there (through a pull request). The service URL is not a secret.
-2. **Add new site > Import an existing project**, connect the repository, branch `main`.
+2. **Add new site > Import an existing project**, connect the repository, branch `main`. Site names are unique
+   across Netlify and `relaycrm` was already taken, so the site is `relaycrm-demo`:
+   https://relaycrm-demo.netlify.app.
 3. Set **Base directory** to `frontend`. Everything else comes from `netlify.toml`:
    - build command `npm run build` and publish directory `dist`;
    - Node 24;
@@ -117,7 +119,7 @@ free plan." If the server takes longer than that, the app shows "API unreachable
 CDNs weaken ETags (`W/"3"`) when they compress responses. Check once after the first deploy:
 
 ```bash
-curl -si https://YOUR-SITE.netlify.app/api/contacts/1 -H "X-Api-Key: acme-admin-key" | grep -i '^etag'
+curl -si https://relaycrm-demo.netlify.app/api/contacts/1 -H "X-Api-Key: acme-admin-key" | grep -i '^etag'
 # expected: etag: "0"    (a W/ prefix would be the problem)
 ```
 
@@ -129,10 +131,21 @@ with `If-Match`, so it also proves the ETag round trip through Netlify. Run it r
 visitors change the data:
 
 ```bash
-BASE=https://YOUR-SITE.netlify.app bash demo.sh
+BASE=https://relaycrm-demo.netlify.app bash demo.sh
 ```
 
 The script deletes what it creates, but its audit history stays (the audit trail is append-only).
+
+**Verified on the live demo** (https://relaycrm-demo.netlify.app, through Netlify's proxy to Render):
+
+| Check | Result |
+|---|---|
+| Deep link `/deals` | 200 (the SPA fallback serves the app) |
+| `GET /api/me` without an API key | 401 |
+| Globex admin reads Acme's contact 1 | 404 (cross-tenant) |
+| ETag through Netlify's proxy | Stays strong: `"0"`, not `W/"0"` |
+| PATCH with the current `If-Match`, then again with the old one | 200, then 412 |
+| Illegal stage move (`PROSPECTING` to `WON`) | 409 |
 
 ## 5. Resetting the demo
 
