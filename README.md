@@ -20,9 +20,10 @@ In PowerShell or cmd, use `.\mvnw.cmd` in place of `./mvnw`, and quote the profi
 
 Every pull request, and every merge to `main`, runs `./mvnw verify` in GitHub Actions (`.github/workflows/ci.yml`).
 
-`demo.sh` sends about 80 requests as different users and prints, for each, the expected and the actual HTTP status:
+`demo.sh` sends over 100 requests as different users and prints, for each, the expected and the actual HTTP status:
 both organizations listing their own data, blocked cross-tenant reads, updates and deletes, each role rule, the
-PUT / PATCH update rules, two people editing the same record, and the audit trail.
+PUT / PATCH update rules, two people editing the same record, the audit trail, and a deal moving through the
+pipeline with its automatic follow-up tasks.
 
 ### Demo users
 
@@ -52,6 +53,9 @@ the caller is.
 | `PATCH /{id}`      | only if owner      | yes     | yes   | 404                            |
 | `DELETE /{id}`     | 403                | 403     | yes   | 404 (403 for non-admins)       |
 | `GET /{id}/history` | yes               | yes     | yes   | 404                            |
+
+`/api/tasks` follows the same rules with three differences: a rep sees only their own tasks, there is no PUT, and
+the list takes filters. See "Follow-up tasks" below.
 
 ### Updating a record: PUT or PATCH
 
@@ -187,6 +191,112 @@ Mark (user 2) moved it to WON; before that it was PROPOSAL, as Rita (user 3) cre
 - **The seeded demo records have an empty history** until someone changes them: they were inserted by SQL, not
   through the API.
 
+### Deal stages and lead statuses: allowed moves
+
+A deal's `stage` and a lead's `status` can only change along these moves. Anything else is refused with
+409 Conflict, and the answer lists where the record may go.
+
+| Deal stage | May move to |
+|---|---|
+| `PROSPECTING` | `PROPOSAL`, `LOST` |
+| `PROPOSAL` | `NEGOTIATION`, `PROSPECTING` (back), `WON`, `LOST` |
+| `NEGOTIATION` | `PROPOSAL` (back), `WON`, `LOST` |
+| `WON` | nothing: final |
+| `LOST` | nothing: final |
+
+| Lead status | May move to |
+|---|---|
+| `NEW` | `CONTACTED`, `QUALIFIED`, `DISQUALIFIED` |
+| `CONTACTED` | `QUALIFIED`, `DISQUALIFIED` |
+| `QUALIFIED` | `CONTACTED` (qualified by mistake), `DISQUALIFIED` |
+| `DISQUALIFIED` | `CONTACTED` (picked up again) |
+
+```bash
+# Deal 101 is in PROSPECTING. Trying to mark it WON:
+curl -X PATCH localhost:8080/api/opportunities/101 -H "X-Api-Key: acme-admin-key" -H 'If-Match: "0"' \
+     -H "Content-Type: application/merge-patch+json" -d '{"stage": "WON"}'
+```
+
+```json
+{"status": 409, "title": "Conflict",
+ "detail": "Cannot change stage from PROSPECTING to WON. Allowed from PROSPECTING: PROPOSAL, LOST",
+ "field": "stage", "from": "PROSPECTING", "to": "WON", "allowed": ["PROPOSAL", "LOST"]}
+```
+
+- **A deal is won only after a proposal.** `PROSPECTING` cannot jump to `NEGOTIATION` or `WON`. `PROPOSAL` may go
+  straight to `WON`: the customer accepted the proposal as it was.
+- **`WON` and `LOST` are final** for every role. The other fields of a closed deal can still be edited.
+- **Creating is not a move.** A new deal or lead may start at any stage, for example to enter a deal that is
+  already won.
+- **The same value again is not a move**: it is accepted and changes nothing.
+- **Where the check sits.** After access (404, 403), the version (428, 412) and the body (400), and before
+  anything is saved. A refused move saves nothing, not even other fields sent in the same request, and writes no
+  audit event.
+- **Transactional.** The stage change, its audit event and the follow-up tasks below are one database
+  transaction. Two people moving the same deal at once are separated by `If-Match`: the second gets 412.
+
+### Follow-up tasks
+
+A task is something to do by a certain time: a `title`, a `dueAt`, a `status` (`OPEN`, `DONE`, `CANCELLED`), an owner,
+and optionally a link to one deal (`opportunityId`) or one lead (`leadId`). `source` says whether a person created
+it (`MANUAL`) or a stage rule did (`AUTO`).
+
+| Operation | REP | MANAGER | ADMIN | Task in another organization |
+|---|---|---|---|---|
+| `GET /api/tasks` | own tasks | all | all | never listed |
+| `GET /api/tasks/{id}`, `/{id}/history` | own tasks, otherwise 404 | yes | yes | 404 |
+| `POST /api/tasks` (manual task) | yes (owner = self) | yes | yes | not possible |
+| `PATCH /api/tasks/{id}` (`If-Match` required) | own tasks, otherwise 404 | yes | yes | 404 |
+| `DELETE /api/tasks/{id}` | 403 | 403 | yes | 404 |
+
+The list is ordered soonest due first and takes `?status=`, `?opportunityId=`, `?leadId=`, `?page=` and `?size=`.
+
+```bash
+# Rita's open tasks, soonest first.
+curl "localhost:8080/api/tasks?status=OPEN" -H "X-Api-Key: acme-rep-rita-key"
+
+# Complete one (the ETag comes from reading the task).
+curl -X PATCH localhost:8080/api/tasks/101 -H "X-Api-Key: acme-rep-rita-key" -H 'If-Match: "0"' \
+     -H "Content-Type: application/merge-patch+json" -d '{"status": "DONE"}'
+```
+
+**Automatic rules.** Each runs in the same transaction as the change that triggers it, so the change and its
+tasks are saved together or not at all. Each is written to the task's audit history, with the person who made the
+change as the actor.
+
+| When | Then |
+|---|---|
+| A deal enters `PROPOSAL` (by a move, or created there) | Task "Follow up on proposal: \<name\>", due in 3 days, for the deal's owner |
+| A lead becomes `QUALIFIED` (by a move, or created so) | Task "Contact qualified lead: \<name\>", due in 1 day, for the lead's owner |
+| A deal becomes `WON` or `LOST`; a lead becomes `DISQUALIFIED` | Its open `AUTO` tasks are cancelled |
+| A deal or lead gets a new owner | Its open `AUTO` tasks move to the new owner |
+| A deal or lead is deleted | All its open tasks are cancelled; the tasks stay, without the link |
+
+- **A task is a record like the others.** It is isolated per organization (application queries, row-level security,
+  composite foreign keys), needs `If-Match` to change, and has a history.
+- **A rep sees only their own tasks.** To a rep, someone else's task is 404 everywhere, not 403.
+- **`DONE` and `CANCELLED` are final.** Reopening is a 409, like a forbidden stage move.
+- **A task survives its deal.** When a deal or lead is deleted, the foreign key clears only the link column
+  (`ON DELETE SET NULL (opportunity_id)`); the task keeps its organization, so it stays invisible to others.
+- **A contact that deals still link to cannot be deleted**: 409, saying how many deals are in the way.
+
+### How duplicate tasks are prevented
+
+A deal that goes `PROPOSAL` to `NEGOTIATION` and back to `PROPOSAL` while its follow-up is still open must not get
+a second one. That is enforced by the database, not by a check in the code:
+
+1. Every automatic task carries a `dedupe_key` naming the rule and the record, for example
+   `opportunity:107:proposal-follow-up`.
+2. A partial unique index allows only one **open** task per key in an organization:
+   `UNIQUE (org_id, dedupe_key) WHERE status = 'OPEN'`.
+3. The task is created with `INSERT ... ON CONFLICT (org_id, dedupe_key) WHERE status = 'OPEN' DO NOTHING`. If an
+   open task with that key exists, nothing is inserted and nothing fails.
+
+Because the index covers open tasks only, completing the task frees the key: entering `PROPOSAL` again then
+creates a new follow-up. And because it is an index, it also holds when two transactions insert the same key at
+the same moment: the second waits for the first to commit and then inserts nothing. A "look first, then insert"
+check in application code could let both through.
+
 ### Design decision: controllers take raw JSON
 
 The POST, PUT and PATCH endpoints receive the body as raw JSON and pass it to `RequestReader`, instead of using
@@ -230,16 +340,19 @@ src/main/java/com/relaycrm
   auth/         ApiKeyAuthFilter (stub login), CurrentUser, CurrentUserContext, User, Role
   tenancy/      TenantAwareTransactionManager (sets app.current_org), startup check on the database role
   audit/        AuditEvent, AuditLog (works out what changed and writes the event), AuditEventRepository
+  task/         Task, TaskService and TaskController (the task API), FollowUpTasks (the automatic rules and the
+                duplicate-proof insert)
   common/       OwnedRecord (base entity, with the version), OwnedRecordService (the access rules and the
                 If-Match check), AccessPolicy, ApiErrors, RecordResponse (adds the ETag header),
                 RequestReader (reads and validates POST / PUT / PATCH bodies)
   contact/      entity, request, repository, service, controller
   lead/         same
-  opportunity/  same, plus the same-organization contact check
+  opportunity/  same, plus the same-organization contact check; OpportunityStage holds the allowed moves
 src/main/resources/db
   migration/V1__schema.sql    tables, composite foreign keys, row-level security, application role
   migration/V2__version.sql   version column for optimistic locking
   migration/V3__audit_events.sql   audit trail: table, row-level security, append-only grants and trigger
+  migration/V4__tasks_and_transitions.sql   tasks: table, row-level security, one-open-task-per-key index
   demo/R__demo_data.sql       two organizations, six users, sample records ("demo" profile only)
 src/test/java/com/relaycrm
   TenantIsolationTest         cross-tenant requests over HTTP, plus row-level security tested with raw SQL
@@ -247,8 +360,25 @@ src/test/java/com/relaycrm
   UpdateSemanticsTest         PUT replacement, PATCH merging, required and unknown fields
   OptimisticLockingTest       If-Match: stale, missing and malformed versions, and two saves forced to race
   AuditTrailTest              one event per saved change, none otherwise; history visibility; append-only in SQL
+  StageTransitionTest         every from/to pair of deal stages and lead statuses: allowed or 409
+  FollowUpTaskTest            automatic tasks, duplicate prevention (with a forced race), rollback, task API
 demo.sh                       live walkthrough
 ```
+
+## Resume claims → where in the code → which test proves it
+
+All tests are integration tests: they start the whole application against a real PostgreSQL (Testcontainers)
+and go through HTTP, or through raw SQL where the claim is about the database itself.
+
+| Claim | Where in the code | Test that proves it |
+|---|---|---|
+| Multi-tenant isolation | `OwnedRecordService`, `TenantAwareTransactionManager`, `V1__schema.sql` | `TenantIsolationTest` |
+| Role-based permissions | `AccessPolicy`, `OwnedRecordService` | `RolePermissionTest` |
+| Optimistic locking | `OwnedRecord` (`@Version`), `OwnedRecordService`, `V2__version.sql` | `OptimisticLockingTest` |
+| Append-only audit trail | `AuditLog`, `AuditEvent`, `V3__audit_events.sql` | `AuditTrailTest` |
+| Transactional deal-stage transitions | `OpportunityStage`, `LeadStatus`, `OpportunityService`, `LeadService` | `StageTransitionTest` |
+| Automated follow-up task creation with duplicate prevention | `FollowUpTasks`, `TaskService`, `V4__tasks_and_transitions.sql` | `FollowUpTaskTest` |
+| Database-backed integration tests | `IntegrationTestBase` | all seven test classes, run by `./mvnw verify` and CI |
 
 ## Authentication: stub now, and in production
 
@@ -266,7 +396,8 @@ In production I would:
 
 ## Known gaps
 
-- **Planned next: per-record visibility.** Today everyone can view every record in their organization. The next
+- **Planned next: per-record visibility.** Today everyone can view every contact, lead and opportunity in their
+  organization (tasks are already limited: a rep sees only their own). The next
   step is a visibility setting on each record: "organization" (the default, as now) or "restricted" (owner, managers
   and admins only). A restricted record would answer 404 to anyone else and never appear in their lists, and only
   the owner, a manager or an admin could change the setting. Sharing with named people or teams is deliberately
@@ -279,6 +410,14 @@ In production I would:
   of a deleted record can only be found by someone who already knows its id.
 - Audit events name the actor by user id only, and record changes made through the API, not changes made directly
   in the database.
+- A closed deal cannot be reopened by anyone, so a deal marked `WON` or `LOST` by mistake has to be entered again.
+  An admin-only, audited "reopen" would be the next step.
+- The follow-up rules (which stage creates which task, due in how many days) are fixed in code, not configurable
+  per organization. Nothing reminds anyone when a task is due.
+- When a deal or lead is deleted, the database clears the link on its tasks directly, so that one change does not
+  appear in the tasks' audit history and does not change their version. The cancellation of the open tasks does.
+- The seeded demo deal that is already in `PROPOSAL` has no follow-up task: it was inserted by SQL, not through the
+  API.
 - No rate limiting.
 - The `users` table is not under row-level security, because the login lookup runs before the organization is
   known. The API never exposes other organizations' users, but that rests on application code alone.

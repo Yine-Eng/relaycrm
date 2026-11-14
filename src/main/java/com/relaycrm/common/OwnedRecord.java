@@ -14,7 +14,9 @@ import jakarta.persistence.Version;
 /**
  * Base for every CRM record: it belongs to one organization and is owned by
  * one user of that organization. org_id is written once and never updated.
- * Only {@link OwnedRecordService} (same package) can set organization and owner.
+ * Only {@link OwnedRecordService} (same package) can set the organization. The
+ * owner is set by that service too; the setter is protected so that a record
+ * type can offer a narrow, named way to change it (see Task.moveTo).
  *
  * version is managed by JPA for optimistic locking: it starts at 0, goes up by
  * one on every update that changes something, and an update based on an older
@@ -69,7 +71,7 @@ public abstract class OwnedRecord {
         return ownerId;
     }
 
-    void setOwnerId(Long ownerId) {
+    protected void setOwnerId(Long ownerId) {
         this.ownerId = ownerId;
     }
 

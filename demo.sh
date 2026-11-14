@@ -192,5 +192,56 @@ call "Acme manager"  "$ACME_MANAGER" 200 GET   /api/opportunities/$OPP/history
 call "Acme rep Rita" "$ACME_RITA"    404 GET   /api/opportunities/$OPP/history
 call "Globex admin"  "$GLOBEX_ADMIN" 404 GET   /api/opportunities/$OPP/history
 
+section "13. A deal moves through the pipeline: stage rules and automatic follow-up tasks"
+call "Acme rep Rita" "$ACME_RITA"    201 POST  /api/opportunities '{"name":"Acme Rockets - fleet deal","contactId":1,"amount":20000}'
+OPP=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+echo "    BLOCKED: a deal cannot jump from PROSPECTING to WON. The answer lists where it may go."
+call "Acme rep Rita" "$ACME_RITA"    409 PATCH /api/opportunities/$OPP '{"stage":"WON"}'
+echo "    The manager moves it to PROPOSAL. In the same transaction a follow-up task is created"
+echo "    for Rita (user 3), the deal's owner, due in 3 days:"
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/opportunities/$OPP '{"stage":"PROPOSAL"}'
+call "Acme rep Rita" "$ACME_RITA"    200 GET   "/api/tasks?opportunityId=$OPP"
+TASK=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+echo "    PROPOSAL -> NEGOTIATION -> PROPOSAL while that task is open: still exactly one task (id $TASK)"
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/opportunities/$OPP '{"stage":"NEGOTIATION"}'
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/opportunities/$OPP '{"stage":"PROPOSAL"}'
+call "Acme rep Rita" "$ACME_RITA"    200 GET   "/api/tasks?opportunityId=$OPP"
+echo "    Rita completes the task. Entering PROPOSAL again now creates a new one:"
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/tasks/$TASK '{"status":"DONE"}'
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/opportunities/$OPP '{"stage":"NEGOTIATION"}'
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/opportunities/$OPP '{"stage":"PROPOSAL"}'
+call "Acme rep Rita" "$ACME_RITA"    200 GET   "/api/tasks?opportunityId=$OPP&status=OPEN"
+TASK2=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+echo "    A finished task cannot be reopened"
+call "Acme rep Rita" "$ACME_RITA"    409 PATCH /api/tasks/$TASK '{"status":"OPEN"}'
+echo "    Reps see only their own tasks: for Ravi this deal has none and Rita's task does not exist."
+echo "    The manager sees both. Another organization sees nothing."
+call "Acme rep Ravi" "$ACME_RAVI"    200 GET   "/api/tasks?opportunityId=$OPP"
+call "Acme rep Ravi" "$ACME_RAVI"    404 GET   /api/tasks/$TASK2
+call "Acme manager"  "$ACME_MANAGER" 200 GET   "/api/tasks?opportunityId=$OPP"
+call "Globex admin"  "$GLOBEX_ADMIN" 404 GET   /api/tasks/$TASK2
+call "Globex admin"  "$GLOBEX_ADMIN" 200 GET   "/api/tasks?opportunityId=$OPP"
+echo "    The deal is handed to Ravi (user 4): the open follow-up moves with it"
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/opportunities/$OPP '{"ownerId":4}'
+call "Acme rep Ravi" "$ACME_RAVI"    200 GET   /api/tasks/$TASK2
+echo "    The deal is won: its open follow-up is cancelled in the same transaction. WON is final."
+call "Acme manager"  "$ACME_MANAGER" 200 PATCH /api/opportunities/$OPP '{"stage":"WON"}'
+call "Acme manager"  "$ACME_MANAGER" 409 PATCH /api/opportunities/$OPP '{"stage":"NEGOTIATION"}'
+echo "    The task's history: created and moved and cancelled by Rita's and Mark's stage changes"
+call "Acme manager"  "$ACME_MANAGER" 200 GET   /api/tasks/$TASK2/history
+echo "    Leads: becoming QUALIFIED creates a task due in 1 day; nothing goes back to NEW"
+call "Acme rep Rita" "$ACME_RITA"    201 POST  /api/leads '{"name":"Wile E. Lead"}'
+LEAD=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+call "Acme rep Rita" "$ACME_RITA"    200 PATCH /api/leads/$LEAD '{"status":"QUALIFIED"}'
+call "Acme rep Rita" "$ACME_RITA"    200 GET   "/api/tasks?leadId=$LEAD"
+TASK3=$(printf '%s' "$BODY" | sed -E 's/.*"id":([0-9]+).*/\1/')
+call "Acme rep Rita" "$ACME_RITA"    409 PATCH /api/leads/$LEAD '{"status":"NEW"}'
+echo "    Deleting the lead cancels its open task; the task itself survives, without the link"
+call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/leads/$LEAD
+call "Acme rep Rita" "$ACME_RITA"    200 GET   /api/tasks/$TASK3
+echo "    BLOCKED: a contact that deals still link to cannot be deleted (this used to be a 500)"
+call "Acme admin"    "$ACME_ADMIN"   409 DELETE /api/contacts/1
+call "Acme admin"    "$ACME_ADMIN"   204 DELETE /api/opportunities/$OPP
+
 echo
 if [ "$FAILED" = 0 ]; then echo "All steps behaved as expected."; else echo "SOME STEPS DID NOT BEHAVE AS EXPECTED."; exit 1; fi

@@ -90,4 +90,32 @@ class RolePermissionTest extends IntegrationTestBase {
         doPost(ACME_REP_RITA, "/api/opportunities", "{\"name\":\"Deal\",\"amount\":-5}")
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void aContactThatDealsStillLinkToCannotBeDeleted() throws Exception {
+        long id = create(ACME_REP_RITA, "/api/contacts", contactJson("Linked"));
+        String contact = "/api/contacts/" + id;
+        long first = create(ACME_REP_RITA, "/api/opportunities", "{\"name\":\"First\",\"contactId\":" + id + "}");
+        long second = create(ACME_REP_RAVI, "/api/opportunities", "{\"name\":\"Second\",\"contactId\":" + id + "}");
+
+        // Refused clearly (it used to be a 500), naming how many deals are in the way.
+        doDelete(ACME_ADMIN, contact)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail",
+                        is("Contact " + id + " is still linked to 2 opportunities. Remove the link or delete them first")));
+        doGet(ACME_ADMIN, contact).andExpect(status().isOk());
+
+        // The role rule still comes first, and another organization still learns nothing.
+        doDelete(ACME_MANAGER, contact).andExpect(status().isForbidden());
+        doDelete(GLOBEX_ADMIN, contact).andExpect(status().isNotFound());
+
+        // One deal unlinked, one deleted: now the contact can go.
+        doPatch(ACME_REP_RITA, "/api/opportunities/" + first, "{\"contactId\":null}").andExpect(status().isOk());
+        doDelete(ACME_ADMIN, contact)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail",
+                        is("Contact " + id + " is still linked to 1 opportunity. Remove the link or delete it first")));
+        doDelete(ACME_ADMIN, "/api/opportunities/" + second).andExpect(status().isNoContent());
+        doDelete(ACME_ADMIN, contact).andExpect(status().isNoContent());
+    }
 }

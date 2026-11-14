@@ -57,7 +57,7 @@ class TenantIsolationTest extends IntegrationTestBase {
         doGet(ACME_ADMIN, "/api/" + type + "/1").andExpect(status().isOk());
         // Globex's admin guesses Acme's id 1: same answer as for an id that does not exist.
         doGet(GLOBEX_ADMIN, "/api/" + type + "/1").andExpect(status().isNotFound());
-        doGet(GLOBEX_ADMIN, "/api/" + type + "/999999").andExpect(status().isNotFound());
+        doGet(GLOBEX_ADMIN, "/api/" + type + "/" + unusedId(type)).andExpect(status().isNotFound());
     }
 
     @Test

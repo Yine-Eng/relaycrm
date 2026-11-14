@@ -2,6 +2,7 @@ package com.relaycrm;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -9,7 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Map;
@@ -27,6 +27,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -173,7 +174,7 @@ class AuditTrailTest extends IntegrationTestBase {
         doPatch(ACME_REP_RITA, record, null, "{\"lastName\":\"No version\"}").andExpect(status().isPreconditionRequired());
         doDelete(ACME_REP_RITA, record).andExpect(status().isForbidden());
         doDelete(GLOBEX_ADMIN, record).andExpect(status().isNotFound());
-        doDelete(ACME_ADMIN, "/api/contacts/999999").andExpect(status().isNotFound());
+        doDelete(ACME_ADMIN, "/api/contacts/" + unusedId("contacts")).andExpect(status().isNotFound());
 
         assertThat(eventCount()).isEqualTo(before);
         assertThat(eventCount("CONTACT", id)).isEqualTo(1);
@@ -234,9 +235,19 @@ class AuditTrailTest extends IntegrationTestBase {
         // Another organization: 404, the same answer as for an id that does not exist.
         doGet(GLOBEX_ADMIN, history).andExpect(status().isNotFound());
         doGet(GLOBEX_REP, history).andExpect(status().isNotFound());
-        doGet(ACME_ADMIN, "/api/contacts/999999/history").andExpect(status().isNotFound());
-        // The id of a contact is not the id of a lead.
-        doGet(ACME_ADMIN, "/api/opportunities/" + id + "/history").andExpect(status().isNotFound());
+        doGet(ACME_ADMIN, "/api/contacts/" + unusedId("contacts") + "/history").andExpect(status().isNotFound());
+        doGet(ACME_ADMIN, "/api/opportunities/" + unusedId("opportunities") + "/history")
+                .andExpect(status().isNotFound());
+
+        // History is per record type: the contact's number on the opportunity path never shows the
+        // contact's events. Ids are numbered per table, so an opportunity with the same number may or
+        // may not exist, depending on what other tests created: either answer below is correct.
+        ResultActions sameNumber = doGet(ACME_ADMIN, "/api/opportunities/" + id + "/history");
+        if (sameNumber.andReturn().getResponse().getStatus() == 200) {
+            sameNumber.andExpect(jsonPath("$[*].entityType", everyItem(is("OPPORTUNITY"))));
+        } else {
+            sameNumber.andExpect(status().isNotFound());
+        }
     }
 
     @Test
@@ -290,9 +301,11 @@ class AuditTrailTest extends IntegrationTestBase {
         try {
             tx.executeWithoutResult(status -> {
                 assertThat(jdbc.queryForObject(
-                        "select count(*) from audit_events where entity_id = " + globex, Long.class)).isEqualTo(1);
+                        "select count(*) from audit_events where entity_type = 'CONTACT' and entity_id = " + globex,
+                        Long.class)).isEqualTo(1);
                 assertThat(jdbc.queryForObject(
-                        "select count(*) from audit_events where entity_id = " + acme, Long.class)).isZero();
+                        "select count(*) from audit_events where entity_type = 'CONTACT' and entity_id = " + acme,
+                        Long.class)).isZero();
                 assertThat(jdbc.queryForObject(
                         "select count(*) from audit_events where org_id <> 2", Long.class)).isZero();
             });
@@ -355,10 +368,6 @@ class AuditTrailTest extends IntegrationTestBase {
     }
 
     // --- Counting events directly in the database, as the owner (not limited by row-level security) ---
-
-    private static Connection ownerConnection() throws Exception {
-        return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
-    }
 
     private static long eventCount() throws Exception {
         return count("select count(*) from audit_events");
