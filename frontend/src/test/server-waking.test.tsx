@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GET_RETRY_DELAYS_MS, apiFetch, isWakingServer, type ApiRequest } from '@/api/client'
 import { ApiError } from '@/api/errors'
+import { WAKING_FULL, WAKING_SHORT } from '@/components/app-shell'
 
 import { jsonResponse, renderAppAt } from './render'
 
@@ -44,9 +45,12 @@ describe('Waking a sleeping server', () => {
     expect(isWakingServer()).toBe(false)
   })
 
-  it('waits about a minute in all, then gives up with the last error', async () => {
+  it('waits two minutes in all, then gives up with the last error', async () => {
     const fetchMock = serverAnswering(...Array<number>(20).fill(502))
-    expect(TOTAL_WAIT_MS).toBe(60_000)
+    expect(TOTAL_WAIT_MS).toBe(120_000)
+    // Backoff first (1, 2, 4, 8 s), then every 15 s.
+    expect(GET_RETRY_DELAYS_MS.slice(0, 5)).toEqual([1000, 2000, 4000, 8000, 15000])
+    expect(GET_RETRY_DELAYS_MS.slice(4).every((ms) => ms === 15000)).toBe(true)
 
     const result = apiFetch('/api/me')
     const failure = expect(result).rejects.toMatchObject({ status: 502 })
@@ -98,14 +102,19 @@ describe('Waking a sleeping server', () => {
 })
 
 describe('The status dot while the server wakes', () => {
-  it('says "Waking up the demo server…", then "API connected"', async () => {
+  it('says the server is waking and how long it can take, then "API connected"', async () => {
     // The first answer is a gateway timeout, as from Netlify while Render starts the server.
     serverAnswering(504)
     await renderAppAt('/pipeline')
 
-    expect(await screen.findByText('Waking up the demo server…')).toBeInTheDocument()
+    // Every wording is in the page; CSS picks one by screen width: the full sentence in the top bar on
+    // wide screens, the short one on medium ones, and the full sentence under the top bar on phones.
+    expect(await screen.findAllByText(WAKING_FULL)).toHaveLength(2)
+    expect(screen.getByText(WAKING_SHORT)).toBeInTheDocument()
+    expect(WAKING_FULL).toContain('up to 2 minutes on the free plan')
     // The first pause is one second; then /api/me answers.
     expect(await screen.findByText('API connected', {}, { timeout: 3000 })).toBeInTheDocument()
-    expect(screen.queryByText('Waking up the demo server…')).not.toBeInTheDocument()
+    expect(screen.queryByText(WAKING_FULL)).not.toBeInTheDocument()
+    expect(screen.queryByText(WAKING_SHORT)).not.toBeInTheDocument()
   })
 })

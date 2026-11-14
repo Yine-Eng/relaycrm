@@ -19,7 +19,7 @@ There are two passwords. Neither is ever written into a file in this repository.
 
 | Secret | Where it comes from | Where it goes |
 |---|---|---|
-| Owner role password | Neon creates it with the project (the owner role, usually `neondb_owner`) | Render, environment variable `DB_OWNER_PASSWORD` |
+| Owner role password | Neon creates it with the project, for the owner role shown under **Roles** | Render, environment variable `DB_OWNER_PASSWORD` |
 | App role password | You generate it (a password manager, or `openssl rand -base64 32`) | 1. The Neon SQL Editor, once, typed over the placeholder in `neon-setup.sql` (do not save the file). 2. Render, environment variable `DB_APP_PASSWORD` |
 
 The demo API keys (`acme-admin-key` and the others) are not secrets: they are the published demo keys from the
@@ -30,11 +30,12 @@ seed data, and the public site needs them in its bundle.
 The project `relaycrm` (Postgres 17, AWS US East 2) with the database `relaycrm` already exists.
 
 1. **Find the direct connection details.** In the Neon Console, open the project, then **Connect**. Choose branch
-   `main`, database `relaycrm`, and the owner role. Turn **Connection pooling off**: the host must not contain
+   `production` (Neon's default branch), database `relaycrm`, and the owner role. Turn **Connection pooling off**:
+   the host must not contain
    `-pooler`. Pooled connections break the migrations, which hold a lock for the whole session. Note:
    - the host, for example `ep-example-123456.us-east-2.aws.neon.tech`;
-   - the owner role's name (usually `neondb_owner`) and its password.
-2. **Create the app role.** Open the **SQL Editor** (branch `main`, database `relaycrm`, as the owner role). Paste
+   - the owner role's name and its password: the owner role shown under **Roles** in the Neon Console (Neon names it after the database; here it is `relaycrm_owner`).
+2. **Create the app role.** Open the **SQL Editor** (branch `production`, database `relaycrm`, as the owner role). Paste
    the contents of [`neon-setup.sql`](neon-setup.sql), replace `REPLACE_WITH_DB_APP_PASSWORD` with the app password
    you generated, and run it. The last statement prints one row: `superuser = f`, `bypass_rls = f`,
    `member_of = 0`. Each statement is explained in the file.
@@ -63,7 +64,7 @@ The project `relaycrm` (Postgres 17, AWS US East 2) with the database `relaycrm`
    |---|---|
    | `SPRING_PROFILES_ACTIVE` | `demo` (loads the seed data: two organizations, six users, sample records) |
    | `DB_URL` | `jdbc:postgresql://<direct host from step 1.1>/relaycrm?sslmode=require` |
-   | `DB_OWNER_USER` | the owner role, usually `neondb_owner` |
+   | `DB_OWNER_USER` | the owner role shown under **Roles** in Neon (here `relaycrm_owner`) |
    | `DB_OWNER_PASSWORD` | the owner role's password (secret) |
    | `DB_APP_USER` | `relaycrm_app` |
    | `DB_APP_PASSWORD` | the app password from step 1.2 (secret) |
@@ -72,7 +73,8 @@ The project `relaycrm` (Postgres 17, AWS US East 2) with the database `relaycrm`
    Do not set `PORT`: Render sets it, and the API listens on it. `JAVA_TOOL_OPTIONS` is set in the image for
    512 MB; only override it on purpose.
 
-4. **Deploy.** The first build takes a few minutes. In the logs, look for:
+4. **Deploy.** The first build takes a few minutes, and on the free plan the first start took about 75 seconds
+   (it also creates every table and loads the seed). In the logs, look for:
    - `Successfully applied 5 migrations to schema "public", now at version v4`;
    - `Started RelayCrmApplication`.
 
@@ -81,21 +83,22 @@ The project `relaycrm` (Postgres 17, AWS US East 2) with the database `relaycrm`
 5. **Check it.** The service's URL is `https://<service-name>.onrender.com`:
 
    ```bash
-   curl https://YOUR-RENDER-SERVICE.onrender.com/actuator/health
+   curl https://relaycrm-api.onrender.com/actuator/health
    # {"groups":["liveness","readiness"],"status":"UP"}   no API key needed
 
-   curl https://YOUR-RENDER-SERVICE.onrender.com/api/me -H "X-Api-Key: acme-rep-rita-key"
+   curl https://relaycrm-api.onrender.com/api/me -H "X-Api-Key: acme-rep-rita-key"
    # {"id":3,"orgId":1,"role":"REP"}
    ```
 
 **Cold starts.** A free Render service sleeps after 15 minutes without requests. The next request wakes it, which
-takes 30 to 60 seconds, sometimes more. While it wakes, the web app retries reads and shows "Waking up the demo
-server…".
+takes about 75-100 seconds on the free plan's CPU (the very first start took about 75 seconds). While it wakes, the
+web app retries reads for up to 2 minutes and says "Waking up the demo server… this can take up to 2 minutes on the
+free plan." If the server takes longer than that, the app shows "API unreachable" and a reload tries again.
 
 ## 3. Netlify: the web app
 
-1. In `frontend/netlify.toml`, replace `YOUR-RENDER-SERVICE` with the Render service's name and commit that
-   change (through a pull request). The service URL is not a secret.
+1. `frontend/netlify.toml` already forwards `/api/*` to the Render service, `https://relaycrm-api.onrender.com`. If
+   the service is ever renamed, change it there (through a pull request). The service URL is not a secret.
 2. **Add new site > Import an existing project**, connect the repository, branch `main`.
 3. Set **Base directory** to `frontend`. Everything else comes from `netlify.toml`:
    - build command `npm run build` and publish directory `dist`;
@@ -106,7 +109,7 @@ server…".
 
    No environment variables need to be added in the Netlify UI, and no secrets go there.
 4. **Deploy**, then open the site. The banner reads "Public demo: seeded data, anyone can change it." and the top
-   bar turns to "API connected" (after "Waking up the demo server…" on a cold start).
+   bar turns to "API connected" (after "Waking up the demo server…", for up to 2 minutes, on a cold start).
 
 ## 4. Check the deployed demo
 
@@ -142,8 +145,8 @@ Visitors can change everything. To put the seed data back:
 
 The app role and both passwords stay as they are.
 
-**Alternative: Neon point-in-time restore.** In the Neon Console, restore the `main` branch to a moment just
-after the first deploy (Branches > `main` > Restore). Nothing needs to run afterwards, but the moment must still
+**Alternative: Neon point-in-time restore.** In the Neon Console, restore the `production` branch to a moment
+just after the first deploy (Branches > `production` > Restore). Nothing needs to run afterwards, but the moment must still
 be inside Neon's history window, which is short on the free plan. The SQL reset works at any time.
 
 ## What was verified before this was committed

@@ -14,11 +14,10 @@
   VITE_PUBLIC_DEMO = "true"
 
 # The API, served from the same origin so the browser needs no CORS: Netlify forwards
-# every /api request to the Render service.
-# Replace YOUR-RENDER-SERVICE with the service's name (its URL is https://<name>.onrender.com).
+# every /api request to the Render service "relaycrm-api".
 [[redirects]]
   from = "/api/*"
-  to = "https://YOUR-RENDER-SERVICE.onrender.com/api/:splat"
+  to = "https://relaycrm-api.onrender.com/api/:splat"
   status = 200
   force = true
 

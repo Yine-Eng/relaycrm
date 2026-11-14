@@ -1,8 +1,9 @@
 -- RelayCRM: one-time setup of the application's database role on Neon.
 --
 -- Run ONCE, before the first deploy, in the Neon SQL Editor:
---   project "relaycrm", branch "main", database "relaycrm",
---   as the project's owner role (the one Neon created, usually "neondb_owner").
+--   project "relaycrm", branch "production" (Neon's default branch), database "relaycrm",
+--   as the project's owner role: the one shown under Roles in the Neon Console. Neon names it
+--   after the database; for this project it is "relaycrm_owner".
 --
 -- Before running: replace REPLACE_WITH_DB_APP_PASSWORD below with the password you generated
 -- for the app role, in the SQL Editor only. Do not save the real password in this file.

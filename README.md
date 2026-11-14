@@ -7,14 +7,15 @@ another's data.
 ## Live demo
 
 - **Web app:** https://YOUR-SITE.netlify.app
-- **API health:** https://YOUR-RENDER-SERVICE.onrender.com/actuator/health
+- **API:** https://relaycrm-api.onrender.com ([health check](https://relaycrm-api.onrender.com/actuator/health))
 
 Pick a user with "View as" in the top bar: four at Acme Corp, two at Globex Inc, with different roles.
 
 - **Seeded, public data.** The demo starts from the seed data (two organizations, six users, a few records), and
   anyone can change it. The banner at the top says so.
-- **The first load can take 30-60 seconds.** The API runs on a free Render service that sleeps after 15 minutes
-  without requests. The top bar shows "Waking up the demo server…" until it answers; after that it is quick.
+- **The first load can take up to 2 minutes.** The API runs on a free Render service that sleeps after 15 minutes
+  without requests, and waking it took about 75-100 seconds. The top bar says "Waking up the demo server… this can
+  take up to 2 minutes on the free plan." and the app keeps trying for up to 2 minutes; after that it is quick.
 - **Resetting it is manual for now:** a SQL script and a restart, described in
   [docs/deploy/DEPLOY.md](docs/deploy/DEPLOY.md#5-resetting-the-demo).
 

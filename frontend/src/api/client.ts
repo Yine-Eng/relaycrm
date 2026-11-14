@@ -11,10 +11,11 @@ import { ApiError } from './errors'
  * /api to the backend, and on the hosted demo Netlify does, so the browser
  * never makes a cross-origin request.
  *
- * Waking a sleeping server: the hosted demo's API sleeps when idle and takes
- * 30-60 seconds to start, longer than Netlify waits for it (about 26 seconds).
- * The first requests then fail with 502 or 504, or never connect. A GET that
- * fails that way is tried again, with growing pauses, for about a minute, and
+ * Waking a sleeping server: the hosted demo's API sleeps when idle and, on
+ * Render's free CPU, takes about 75-100 seconds to start, far longer than
+ * Netlify waits for it (about 26 seconds). The first requests then fail with
+ * 502 or 504, or never connect. A GET that fails that way is tried again,
+ * with growing pauses, for up to two minutes, and
  * isWakingServer() is true meanwhile. Only GET: a POST, PUT, PATCH or DELETE
  * might have reached the server before the error, so repeating it could apply
  * the change twice.
@@ -50,8 +51,13 @@ export interface ApiRequest {
 /** Statuses that mean "the server is not up (yet)": no connection, bad gateway, unavailable, gateway timeout. */
 const SERVER_STARTING = new Set([0, 502, 503, 504])
 
-/** Pauses between the attempts of a GET while the server starts: 60 seconds in all. */
-export const GET_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 15000, 15000, 15000]
+/**
+ * Pauses between the attempts of a GET while the server starts: 1, 2, 4 and 8 seconds, then every
+ * 15 seconds, 120 seconds in all (a cold start on Render's free plan took 75-100 seconds).
+ */
+export const GET_RETRY_DELAYS_MS: readonly number[] = [
+  1000, 2000, 4000, 8000, 15000, 15000, 15000, 15000, 15000, 15000, 15000,
+]
 
 let wakingServer = false
 const wakingListeners = new Set<() => void>()
