@@ -11,6 +11,9 @@ spring:
     # Migrations run as the schema owner, a different (privileged) role.
     user: ${DB_OWNER_USER:relaycrm_owner}
     password: ${DB_OWNER_PASSWORD:owner_secret}
+    # Fail with "Unable to resolve location ..." if the migration files are missing,
+    # instead of starting against an empty schema and failing later with an unrelated error.
+    fail-on-missing-locations: true
     placeholders:
       appUser: ${spring.datasource.username}
       appPassword: ${spring.datasource.password}

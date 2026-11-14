@@ -1,0 +1,27 @@
+name: CI
+
+# Every pull request is built and tested; main is built again after each merge.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # The integration tests start their own PostgreSQL with Testcontainers,
+      # using the Docker daemon that ubuntu-latest runners already provide.
+      - name: Build and test
+        run: ./mvnw --batch-mode verify

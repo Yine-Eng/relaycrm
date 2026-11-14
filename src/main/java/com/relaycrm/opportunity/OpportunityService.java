@@ -4,6 +4,7 @@ import com.relaycrm.auth.CurrentUser;
 import com.relaycrm.auth.UserRepository;
 import com.relaycrm.common.ApiErrors;
 import com.relaycrm.common.OwnedRecordService;
+import com.relaycrm.common.RequestReader;
 import com.relaycrm.contact.ContactRepository;
 
 import org.springframework.stereotype.Service;
@@ -13,8 +14,9 @@ public class OpportunityService extends OwnedRecordService<Opportunity, Opportun
 
     private final ContactRepository contacts;
 
-    public OpportunityService(OpportunityRepository opportunities, UserRepository users, ContactRepository contacts) {
-        super(opportunities, users, "Opportunity");
+    public OpportunityService(OpportunityRepository opportunities, UserRepository users, RequestReader requests,
+                              ContactRepository contacts) {
+        super(opportunities, users, requests, OpportunityRequest.class, "Opportunity");
         this.contacts = contacts;
     }
 
@@ -32,7 +34,14 @@ public class OpportunityService extends OwnedRecordService<Opportunity, Opportun
         opportunity.setName(request.name());
         opportunity.setContactId(request.contactId());
         opportunity.setAmount(request.amount());
+        // Only a create can arrive without a stage; updates are validated to carry one.
         opportunity.setStage(request.stage() != null ? request.stage() : OpportunityStage.PROSPECTING);
         opportunity.setCloseDate(request.closeDate());
+    }
+
+    @Override
+    protected OpportunityRequest toRequest(Opportunity opportunity) {
+        return new OpportunityRequest(opportunity.getName(), opportunity.getContactId(), opportunity.getAmount(),
+                opportunity.getStage(), opportunity.getCloseDate(), opportunity.getOwnerId());
     }
 }

@@ -1,5 +1,7 @@
 package com.relaycrm.common;
 
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.ErrorResponseException;
@@ -21,6 +23,14 @@ public final class ApiErrors {
 
     public static ErrorResponseException badRequest(String detail) {
         return error(HttpStatus.BAD_REQUEST, detail);
+    }
+
+    /** 400 that names each rejected field: {"errors": {"lastName": "must not be blank"}}. */
+    public static ErrorResponseException invalidFields(Map<String, String> errors) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Invalid fields: " + String.join(", ", errors.keySet()));
+        problem.setProperty("errors", errors);
+        return new ErrorResponseException(HttpStatus.BAD_REQUEST, problem, null);
     }
 
     private static ErrorResponseException error(HttpStatus status, String detail) {

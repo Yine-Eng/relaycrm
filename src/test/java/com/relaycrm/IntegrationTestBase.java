@@ -2,6 +2,7 @@ package com.relaycrm;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
@@ -63,6 +64,12 @@ public abstract class IntegrationTestBase {
 
     protected ResultActions doPut(String apiKey, String path, String json) throws Exception {
         return mvc.perform(put(path).header("X-Api-Key", apiKey).contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    /** PATCH with a JSON Merge Patch body. */
+    protected ResultActions doPatch(String apiKey, String path, String json) throws Exception {
+        return mvc.perform(patch(path).header("X-Api-Key", apiKey)
+                .contentType("application/merge-patch+json").content(json));
     }
 
     protected ResultActions doDelete(String apiKey, String path) throws Exception {
