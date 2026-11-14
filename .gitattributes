@@ -1,0 +1,8 @@
+# Shell scripts always keep LF line endings, even in a Windows checkout with core.autocrlf=true.
+# With CRLF, "./mvnw" fails inside the Linux Docker build ("/bin/sh^M: not found").
+mvnw text eol=lf
+*.sh text eol=lf
+
+# The frontend is formatted by Prettier, which writes LF. A CRLF checkout would make
+# "npm run format:check" fail on every file on Windows, though nothing changed.
+frontend/** text=auto eol=lf

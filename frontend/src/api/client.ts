@@ -8,7 +8,16 @@ import { ApiError } from './errors'
  *   - returns the response's ETag next to the data, for a later If-Match.
  *
  * Paths are relative ("/api/me"): in development the Vite server forwards
- * /api to the backend, so the browser never makes a cross-origin request.
+ * /api to the backend, and on the hosted demo Netlify does, so the browser
+ * never makes a cross-origin request.
+ *
+ * Waking a sleeping server: the hosted demo's API sleeps when idle and takes
+ * 30-60 seconds to start, longer than Netlify waits for it (about 26 seconds).
+ * The first requests then fail with 502 or 504, or never connect. A GET that
+ * fails that way is tried again, with growing pauses, for about a minute, and
+ * isWakingServer() is true meanwhile. Only GET: a POST, PUT, PATCH or DELETE
+ * might have reached the server before the error, so repeating it could apply
+ * the change twice.
  */
 
 let apiKey: string | null = null
@@ -38,8 +47,68 @@ export interface ApiRequest {
   signal?: AbortSignal
 }
 
+/** Statuses that mean "the server is not up (yet)": no connection, bad gateway, unavailable, gateway timeout. */
+const SERVER_STARTING = new Set([0, 502, 503, 504])
+
+/** Pauses between the attempts of a GET while the server starts: 60 seconds in all. */
+export const GET_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 15000, 15000, 15000]
+
+let wakingServer = false
+const wakingListeners = new Set<() => void>()
+
+function setWakingServer(waking: boolean) {
+  if (wakingServer !== waking) {
+    wakingServer = waking
+    wakingListeners.forEach((listener) => {
+      listener()
+    })
+  }
+}
+
+/** True while a GET is being retried because the server did not answer yet. */
+export function isWakingServer(): boolean {
+  return wakingServer
+}
+
+export function subscribeToWakingServer(listener: () => void): () => void {
+  wakingListeners.add(listener)
+  return () => {
+    wakingListeners.delete(listener)
+  }
+}
+
 export async function apiFetch<T>(path: string, request: ApiRequest = {}): Promise<ApiResponse<T>> {
   const method = request.method ?? 'GET'
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await send<T>(path, method, request)
+      setWakingServer(false)
+      return response
+    } catch (error) {
+      const pause = GET_RETRY_DELAYS_MS[attempt]
+      const retry =
+        method === 'GET' &&
+        error instanceof ApiError &&
+        SERVER_STARTING.has(error.status) &&
+        pause !== undefined
+      if (!retry) {
+        if (method === 'GET') {
+          setWakingServer(false)
+        }
+        throw error
+      }
+      setWakingServer(true)
+      await wait(pause, request.signal)
+    }
+  }
+}
+
+/** One request, without retries. */
+async function send<T>(
+  path: string,
+  method: NonNullable<ApiRequest['method']>,
+  request: ApiRequest,
+): Promise<ApiResponse<T>> {
   const headers = new Headers({ Accept: 'application/json, application/problem+json' })
   if (apiKey) {
     headers.set('X-Api-Key', apiKey)
@@ -68,6 +137,24 @@ export async function apiFetch<T>(path: string, request: ApiRequest = {}): Promi
     throw ApiError.fromProblem(response.status, payload, response.statusText || `HTTP ${response.status}`)
   }
   return { data: payload as T, status: response.status, etag: response.headers.get('ETag') }
+}
+
+function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
 }
 
 /** JSON (including problem+json) is parsed; an empty body (204) is undefined; anything else is ignored. */

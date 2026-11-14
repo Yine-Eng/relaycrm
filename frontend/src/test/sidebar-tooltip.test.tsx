@@ -1,29 +1,15 @@
-import { QueryClient } from '@tanstack/react-query'
-import { RouterProvider, createMemoryHistory, createRouter } from '@tanstack/react-router'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { routeTree } from '@/routeTree.gen'
-
-import { jsonResponse, renderWithProviders } from './render'
+import { jsonResponse, renderAppAt } from './render'
 
 const SIDEBAR_LINKS = ['Pipeline', 'Deals', 'Leads', 'Contacts', 'Tasks', 'Activity', 'Design system']
 
-/** The real app (routes, shell, providers) at /pipeline, with /api/me answering. */
+/** The real app at /pipeline, with /api/me answering. */
 async function renderApp() {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ id: 3, orgId: 1, role: 'REP' }))
-  const router = createRouter({
-    routeTree,
-    context: { queryClient: new QueryClient() },
-    history: createMemoryHistory({ initialEntries: ['/pipeline'] }),
-  })
-  renderWithProviders(
-    <TooltipProvider>
-      <RouterProvider router={router} />
-    </TooltipProvider>,
-  )
+  await renderAppAt('/pipeline')
   return within(await screen.findByRole('complementary'))
 }
 

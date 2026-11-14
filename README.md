@@ -4,6 +4,23 @@ Multi-tenant CRM core: a Spring Boot + PostgreSQL REST API where small sales tea
 opportunities. Many companies (organizations) share one deployment, and one organization can never read or change
 another's data.
 
+## Live demo
+
+- **Web app:** https://YOUR-SITE.netlify.app
+- **API health:** https://YOUR-RENDER-SERVICE.onrender.com/actuator/health
+
+Pick a user with "View as" in the top bar: four at Acme Corp, two at Globex Inc, with different roles.
+
+- **Seeded, public data.** The demo starts from the seed data (two organizations, six users, a few records), and
+  anyone can change it. The banner at the top says so.
+- **The first load can take 30-60 seconds.** The API runs on a free Render service that sleeps after 15 minutes
+  without requests. The top bar shows "Waking up the demo server…" until it answers; after that it is quick.
+- **Resetting it is manual for now:** a SQL script and a restart, described in
+  [docs/deploy/DEPLOY.md](docs/deploy/DEPLOY.md#5-resetting-the-demo).
+
+It runs on Netlify (web app), Render (API, Docker) and Neon (Postgres). [docs/deploy/DEPLOY.md](docs/deploy/DEPLOY.md)
+has the setup step by step: where each secret goes, the database role, and the checks to run after a deploy.
+
 ## Run it
 
 Needs JDK 21+ and Docker. Maven does not need to be installed: the `mvnw` wrapper downloads it on first use.
@@ -404,9 +421,14 @@ Open Font License 1.1:
 
 ### Windows note
 
-`npm test` starts Vitest through `scripts/vitest.mjs`. On Windows a terminal can start in `c:\...` (lower-case
-drive), and Vitest 4 and 5 then load their runner twice and fail every file with "failed to find the current
-suite". The script starts Vitest from the `C:\...` spelling of the same folder. It changes nothing elsewhere.
+`npm run dev`, `build`, `preview` and `test` start Vite and Vitest through `scripts/run.mjs`. On Windows a
+terminal can start in `c:\...` (lower-case drive). The tools then load some modules twice, under both spellings:
+- Vitest fails every file with "failed to find the current suite";
+- a production build contains React twice and shows a blank page ("Cannot read properties of null (reading
+  'useState')").
+
+The script starts the tool from the `C:\...` spelling of the same folder. It changes nothing on macOS or Linux,
+where CI and Netlify build.
 
 ## How isolation is enforced
 
@@ -463,9 +485,13 @@ src/test/java/com/relaycrm
   OptimisticLockingTest       If-Match: stale, missing and malformed versions, and two saves forced to race
   AuditTrailTest              one event per saved change, none otherwise; history visibility; append-only in SQL
   ApiDocsTest                 the OpenAPI description types every request body (the frontend's types come from it)
+  HealthCheckTest             /actuator/health needs no key and shows no details; no other actuator endpoint
+  NonSuperuserOwnerTest       migrations and seed as a non-superuser owner, as on Neon
+  tenancy/ApplicationRoleCheckTest   the startup check refuses superuser, BYPASSRLS and table-owning roles
   StageTransitionTest         every from/to pair of deal stages and lead statuses: allowed or 409
   FollowUpTaskTest            automatic tasks, duplicate prevention (with a forced race), rollback, task API
-demo.sh                       live walkthrough
+demo.sh                       live walkthrough (BASE=https://... bash demo.sh runs it against the hosted demo)
+Dockerfile                    the API image the hosted demo runs (docs/deploy/DEPLOY.md)
 ```
 
 ## Resume claims → where in the code → which test proves it
@@ -481,7 +507,7 @@ and go through HTTP, or through raw SQL where the claim is about the database it
 | Append-only audit trail | `AuditLog`, `AuditEvent`, `V3__audit_events.sql` | `AuditTrailTest` |
 | Transactional deal-stage transitions | `OpportunityStage`, `LeadStatus`, `OpportunityService`, `LeadService` | `StageTransitionTest` |
 | Automated follow-up task creation with duplicate prevention | `FollowUpTasks`, `TaskService`, `V4__tasks_and_transitions.sql` | `FollowUpTaskTest` |
-| Database-backed integration tests | `IntegrationTestBase` | all eight test classes, run by `./mvnw verify` and CI |
+| Database-backed integration tests | `IntegrationTestBase` | all eleven test classes, run by `./mvnw verify` and CI |
 
 ## Authentication: stub now, and in production
 
@@ -521,7 +547,9 @@ In production I would:
   appear in the tasks' audit history and does not change their version. The cancellation of the open tasks does.
 - The seeded demo deal that is already in `PROPOSAL` has no follow-up task: it was inserted by SQL, not through the
   API.
-- No rate limiting.
+- No rate limiting. That matters more now that a public demo exists: anyone can create records in it.
+- The public demo's data is shared and unprotected by design (the demo API keys are published). Resetting it is
+  manual (docs/deploy/DEPLOY.md).
 - `frontend/src/api/schema.d.ts` is generated and committed. Nothing yet checks in CI that it matches the API, so
   it can fall behind if someone changes the API and forgets `npm run gen:api`.
 - The `users` table is not under row-level security, because the login lookup runs before the organization is
@@ -529,4 +557,5 @@ In production I would:
 - Entities are returned directly as JSON. Request bodies are separate types, so callers cannot set fields such as
   `orgId`, but response DTOs would be the next step as the model grows.
 - Database passwords in `application.yml` and `docker-compose.yml` are local-development defaults, overridable by
-  environment variables (`DB_URL`, `DB_APP_USER`, `DB_APP_PASSWORD`, `DB_OWNER_USER`, `DB_OWNER_PASSWORD`).
+  environment variables (`DB_URL`, `DB_APP_USER`, `DB_APP_PASSWORD`, `DB_OWNER_USER`, `DB_OWNER_PASSWORD`). The
+  hosted demo sets them in Render, never in a file (docs/deploy/DEPLOY.md).

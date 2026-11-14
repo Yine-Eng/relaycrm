@@ -105,13 +105,16 @@ describe('apiFetch', () => {
   })
 
   it('handles an error without a problem body, and a server that cannot be reached', async () => {
-    mockFetch(new Response('Bad gateway', { status: 502, statusText: 'Bad Gateway' }))
-    const gateway = await caught(apiFetch('/api/me'))
-    expect(gateway.status).toBe(502)
-    expect(gateway.title).toBe('Bad Gateway')
+    // Statuses and methods that are never retried (retries are covered in server-waking.test.tsx).
+    mockFetch(
+      new Response('<html>Internal error</html>', { status: 500, statusText: 'Internal Server Error' }),
+    )
+    const crash = await caught(apiFetch('/api/me'))
+    expect(crash.status).toBe(500)
+    expect(crash.title).toBe('Internal Server Error')
 
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
-    const offline = await caught(apiFetch('/api/me'))
+    const offline = await caught(apiFetch('/api/contacts', { method: 'POST', body: { firstName: 'A' } }))
     expect(offline.status).toBe(0)
     expect(offline.title).toBe('Network error')
   })

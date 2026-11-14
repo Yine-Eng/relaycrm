@@ -12,8 +12,10 @@ import {
 import type { ReactNode } from 'react'
 
 import { useMe } from '@/api/me'
+import { useWakingServer } from '@/api/use-waking-server'
 import { useSession } from '@/auth/session'
 import { Brand } from '@/components/brand'
+import { PublicDemoBanner } from '@/components/public-demo-banner'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ViewAsSwitcher } from '@/components/view-as-switcher'
@@ -52,6 +54,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </a>
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
+        <PublicDemoBanner />
         <TopBar />
         <main id="main" tabIndex={-1} className="flex-1 px-4 py-6 outline-none md:px-8 md:py-8">
           <div className="mx-auto w-full max-w-6xl">{children}</div>
@@ -144,19 +147,36 @@ function MobileNav() {
   )
 }
 
-/** A live dot that turns lime once GET /api/me has answered for the current user. */
+/**
+ * A live dot that turns lime once GET /api/me has answered for the current user. While the
+ * client is retrying because the server is still starting (the hosted demo sleeps when idle),
+ * it says so instead of looking broken.
+ */
 function ApiStatus() {
   const { user } = useSession()
   const me = useMe(user !== null)
+  const waking = useWakingServer()
   if (!user) {
     return null
   }
 
-  const state = me.isSuccess ? 'connected' : me.isError ? 'error' : 'checking'
-  const label = { connected: 'API connected', error: 'API unreachable', checking: 'Connecting…' }[state]
+  const state = me.isSuccess ? 'connected' : me.isError ? 'error' : waking ? 'waking' : 'checking'
+  const label = {
+    connected: 'API connected',
+    error: 'API unreachable',
+    waking: 'Waking up the demo server…',
+    checking: 'Connecting…',
+  }[state]
 
   return (
-    <span className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex" role="status">
+    <span
+      role="status"
+      className={cn(
+        'items-center gap-2 text-xs text-muted-foreground',
+        // Normally only on wide screens; while waking, everywhere, so nobody thinks the app is broken.
+        state === 'waking' ? 'flex' : 'hidden lg:flex',
+      )}
+    >
       <span className="relative flex size-2">
         {state === 'connected' && (
           <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand opacity-50 motion-reduce:hidden" />
@@ -167,6 +187,7 @@ function ApiStatus() {
             state === 'connected' && 'bg-brand',
             state === 'error' && 'bg-destructive',
             state === 'checking' && 'bg-subtle-foreground',
+            state === 'waking' && 'animate-pulse bg-stage-negotiation motion-reduce:animate-none',
           )}
         />
       </span>
